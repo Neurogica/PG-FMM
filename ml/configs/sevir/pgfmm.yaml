@@ -1,0 +1,112 @@
+# v22 -- Physics-informed generative nowcaster (controlled experiment).
+#
+# = v11-full pure-generative Flow-Map recipe + ONLY the physics-informed
+#   advection prior added (one variable changed vs v11-full).
+#
+# A frozen LagrangianSourceNet rolls out the physically-consistent forecast
+#   R_{t+1} = warp(R_t, v_t) + s_t
+# from the 5 past frames.  This advective prior (which carries the predictable
+# motion skill) is concatenated to the Flow-Map head's condition, so the
+# generative head only has to add calibrated stochastic detail on top of a
+# physically-anchored forecast -- the NowcastNet-style skill / sharpness
+# decoupling, but with a flow-map generator instead of a GAN.
+#
+# Everything else is byte-for-byte identical to v11-full so any change is
+# attributable to the motion prior alone.  Spectral (PSD) consistency is left
+# at 0 here on purpose (v21 showed it regresses skill); it is a follow-up knob.
+
+dataset:
+  name: sevir
+  img_size: 128
+  T_in: 5
+  T_out: 20
+bridge:
+  type: flow_map
+  interval: 1000
+  beta_max: 0.3
+  ot_ode: false
+  prior_kind: last_frame
+  cond_x1: true
+  cond_extra_x1_external: false
+  cond_extra_T_external: 0
+motion:
+  enabled: true
+  base_channels: 96
+  channel_mult: [1, 2, 4, 4]
+  num_blocks: 2
+  max_displacement: 8.0
+  source_scale: 0.25
+  ckpt: runs/sevir/lagrangian_prior/checkpoints/best.pt
+  freeze: true
+residual:
+  transform: pixel
+  bridge_channels: 1
+  normalize: false
+  target_posterior_shrinkage: false
+  posterior_shrinkage: false
+  use_learned_backbone_uncertainty: false
+flow_map:
+  noise_scale: 1.0
+  min_delta: 0.05
+  direct_prob: 0.5
+  consistency_weight: 0.04
+  consistency_start_step: 12000
+  consistency_ramp_steps: 18000
+  consistency_detach_midpoint: true
+  lambda_psd: 0.0
+gate:
+  use_residual_gate: false
+  init_bias: -1.4
+  lambda_gate_l1: 0.0
+skill:
+  lambda_final_l1: 0.0
+  lambda_false_positive: 0.0
+  lambda_soft_csi: 0.0
+  soft_csi_sharpness: 10.0
+  pixel_scale: 255.0
+  thresholds:
+  - 133.0
+  - 160.0
+  - 181.0
+  - 219.0
+  lambda_preservation: 0.0
+  preservation_tolerance: 0.04
+  lambda_calibration_mse: 0.0
+network:
+  base_channels: 128
+  channel_mult:
+  - 1
+  - 2
+  - 3
+  - 4
+  attention_resolutions:
+  - 16
+  - 8
+  num_res_blocks: 2
+  dropout: 0.0
+physics:
+  lambda_mass: 0.0
+  lambda_smooth: 0.0
+  lambda_diffusion: 0.0
+  diffusion_kappa: 0.01
+train:
+  batch_size: 8
+  num_workers: 8
+  lr: 0.0001
+  weight_decay: 0.0
+  ema_rate: 0.999
+  warmup_steps: 5000
+  total_steps: 297600
+  grad_clip: 0.5
+  mixed_precision: bf16
+  log_every: 100
+  ckpt_every: 10000
+  val_every: 5000
+  val_max_batches: 20
+sample:
+  nfe: 4
+  residual_scale: 1.0
+  clamp:
+  - 0.0
+  - 1.0
+  ot_ode: false

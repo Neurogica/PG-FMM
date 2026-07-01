@@ -1,0 +1,101 @@
+# v22 on MeteoNet — same recipe as SEVIR v22 (frozen Lagrangian prior + Flow-Map).
+#
+# motion.ckpt: train with configs/meteo/lagrangian_source_v1_official.yaml first.
+# Until then, scripts may fall back to the SEVIR Lagrangian ckpt for zero-shot transfer.
+
+dataset:
+  name: meteo
+  img_size: 128
+  T_in: 5
+  T_out: 20
+bridge:
+  type: flow_map
+  interval: 1000
+  beta_max: 0.3
+  ot_ode: false
+  prior_kind: last_frame
+  cond_x1: true
+  cond_extra_x1_external: false
+  cond_extra_T_external: 0
+motion:
+  enabled: true
+  base_channels: 96
+  channel_mult: [1, 2, 4, 4]
+  num_blocks: 2
+  max_displacement: 8.0
+  source_scale: 0.25
+  ckpt: runs/meteo/lagrangian_prior/checkpoints/best.pt
+  freeze: true
+residual:
+  transform: pixel
+  bridge_channels: 1
+  normalize: false
+  target_posterior_shrinkage: false
+  posterior_shrinkage: false
+  use_learned_backbone_uncertainty: false
+flow_map:
+  noise_scale: 1.0
+  min_delta: 0.05
+  direct_prob: 0.5
+  consistency_weight: 0.04
+  consistency_start_step: 6000
+  consistency_ramp_steps: 9000
+  consistency_detach_midpoint: true
+  lambda_psd: 0.0
+gate:
+  use_residual_gate: false
+  init_bias: -1.4
+  lambda_gate_l1: 0.0
+skill:
+  lambda_final_l1: 0.0
+  lambda_false_positive: 0.0
+  lambda_soft_csi: 0.0
+  soft_csi_sharpness: 10.0
+  pixel_scale: 90.0
+  thresholds:
+  - 12.0
+  - 18.0
+  - 24.0
+  - 32.0
+  lambda_preservation: 0.0
+  preservation_tolerance: 0.04
+  lambda_calibration_mse: 0.0
+network:
+  base_channels: 128
+  channel_mult:
+  - 1
+  - 2
+  - 3
+  - 4
+  attention_resolutions:
+  - 16
+  - 8
+  num_res_blocks: 2
+  dropout: 0.0
+physics:
+  lambda_mass: 0.0
+  lambda_smooth: 0.0
+  lambda_diffusion: 0.0
+  diffusion_kappa: 0.01
+train:
+  batch_size: 8
+  num_workers: 8
+  lr: 0.0001
+  weight_decay: 0.0
+  ema_rate: 0.999
+  warmup_steps: 2500
+  # ~same epoch count as SEVIR v22 (297600 steps @ 12182) scaled to 6308 train clips
+  total_steps: 154000
+  grad_clip: 0.5
+  mixed_precision: bf16
+  log_every: 100
+  ckpt_every: 5000
+  val_every: 2500
+  val_max_batches: 20
+sample:
+  nfe: 4
+  residual_scale: 1.0
+  clamp:
+  - 0.0
+  - 1.0
+  ot_ode: false

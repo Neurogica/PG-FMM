@@ -1,0 +1,160 @@
+/* PG-FMM project page — palette drawn from the paper figures (navy "Ours" accent
+   + radar-reflectivity warm) on a clean cool-white radar canvas. */
+:root {
+  --ground: #f7f9fc;
+  --surface: #ffffff;
+  --text: #14203a;
+  --muted: #5a6784;
+  --line: #e2e8f2;
+  --accent: #1f3a66;        /* navy — matches the model figures */
+  --accent-soft: #eaf0f9;
+  --warm: #e8642e;          /* radar reflectivity warm, used sparingly */
+  --rain: #4a8fd4;
+  --maxw: 900px;
+  --radius: 14px;
+  --shadow: 0 1px 2px rgba(20,32,58,.06), 0 12px 34px rgba(20,32,58,.08);
+  --serif: "Spectral", Georgia, "Times New Roman", serif;
+  --sans: "Inter", ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
+}
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  margin: 0;
+  font-family: var(--sans);
+  color: var(--text);
+  background: var(--ground);
+  line-height: 1.65;
+  font-size: 17px;
+  -webkit-font-smoothing: antialiased;
+}
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+img { max-width: 100%; display: block; }
+
+.wrap { max-width: var(--maxw); margin: 0 auto; padding: 0 24px; }
+
+/* ---------- hero ---------- */
+.hero {
+  position: relative;
+  padding: 84px 24px 56px;
+  text-align: center;
+  background:
+    radial-gradient(1100px 380px at 50% -140px, #dfeaf9 0%, rgba(223,234,249,0) 70%),
+    linear-gradient(180deg, #fbfcfe 0%, var(--ground) 100%);
+  border-bottom: 1px solid var(--line);
+}
+.hero::before {  /* thin navy top rule */
+  content: ""; position: absolute; top: 0; left: 0; right: 0; height: 4px;
+  background: linear-gradient(90deg, var(--accent), var(--rain) 55%, var(--warm));
+}
+.eyebrow {
+  font: 600 13px/1 var(--sans); letter-spacing: .16em; text-transform: uppercase;
+  color: var(--accent); margin-bottom: 18px;
+}
+.title {
+  font-family: var(--serif);
+  font-weight: 700;
+  font-size: clamp(2.4rem, 6vw, 4rem);
+  line-height: 1.04;
+  letter-spacing: -.01em;
+  margin: 0 auto 10px;
+  max-width: 16ch;
+}
+.title .kw { color: var(--accent); }
+.subtitle {
+  font-family: var(--serif); font-style: italic;
+  font-size: clamp(1.05rem, 2.4vw, 1.4rem);
+  color: var(--muted); margin: 0 auto 26px; max-width: 40ch;
+}
+.authors { color: var(--text); font-size: 1.02rem; margin: 0 auto 6px; max-width: 52ch; }
+.affil { color: var(--muted); font-size: .95rem; margin-bottom: 26px; }
+
+.buttons { display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; }
+.btn {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 11px 20px; border-radius: 999px;
+  font-weight: 600; font-size: .96rem;
+  border: 1px solid var(--accent); color: #fff; background: var(--accent);
+  transition: transform .12s ease, box-shadow .12s ease, background .12s ease;
+}
+.btn:hover { text-decoration: none; transform: translateY(-1px); box-shadow: var(--shadow); }
+.btn.ghost { background: transparent; color: var(--accent); }
+.btn.ghost:hover { background: var(--accent-soft); }
+
+/* ---------- sections ---------- */
+section { padding: 58px 0; }
+section + section { border-top: 1px solid var(--line); }
+.kicker {
+  font: 600 12.5px/1 var(--sans); letter-spacing: .18em; text-transform: uppercase;
+  color: var(--warm); margin-bottom: 10px; text-align: center;
+}
+h2 {
+  font-family: var(--serif); font-weight: 700;
+  font-size: clamp(1.7rem, 3.6vw, 2.3rem); text-align: center;
+  margin: 0 0 8px; letter-spacing: -.01em;
+}
+.lead { color: var(--muted); text-align: center; max-width: 60ch; margin: 0 auto 30px; }
+p { margin: 0 0 16px; }
+
+/* ---------- figures ---------- */
+figure { margin: 0; }
+.fig {
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--radius); box-shadow: var(--shadow);
+  padding: 14px; overflow: hidden;
+}
+.fig img { border-radius: 8px; margin: 0 auto; }
+figcaption { color: var(--muted); font-size: .9rem; text-align: center; margin-top: 12px; padding: 0 8px; }
+.fig-wide { margin-top: 8px; }
+.two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; }
+@media (max-width: 720px) { .two-col { grid-template-columns: 1fr; } }
+
+/* teaser sits flush under hero */
+.teaser { padding-top: 40px; padding-bottom: 40px; }
+
+/* stage chips under the method figure */
+.stages { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-top: 26px; }
+@media (max-width: 720px) { .stages { grid-template-columns: 1fr; } }
+.stage {
+  background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 18px 20px;
+}
+.stage h3 { margin: 0 0 6px; font-size: 1.05rem; }
+.stage .n { color: var(--accent); font-family: var(--serif); font-weight: 700; }
+.stage p { margin: 0; color: var(--muted); font-size: .95rem; }
+
+/* ---------- results table ---------- */
+.table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); box-shadow: var(--shadow); }
+table { border-collapse: collapse; width: 100%; font-size: .95rem; }
+th, td { padding: 11px 16px; text-align: center; border-bottom: 1px solid var(--line); }
+th { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+td:first-child, th:first-child { text-align: left; }
+tbody tr:last-child td { border-bottom: none; }
+.ours { color: var(--accent); font-weight: 700; }
+.note { color: var(--muted); font-size: .85rem; text-align: center; margin-top: 12px; }
+
+/* ---------- bibtex ---------- */
+.cite { position: relative; }
+pre {
+  background: #0f1b30; color: #d7e2f2; border-radius: var(--radius);
+  padding: 22px 20px; overflow-x: auto; font-family: var(--mono); font-size: .86rem; line-height: 1.7;
+  box-shadow: var(--shadow);
+}
+.copy {
+  position: absolute; top: 12px; right: 12px;
+  background: rgba(255,255,255,.1); color: #d7e2f2; border: 1px solid rgba(255,255,255,.2);
+  border-radius: 8px; padding: 5px 12px; font: 600 .8rem var(--sans); cursor: pointer;
+}
+.copy:hover { background: rgba(255,255,255,.2); }
+
+footer { text-align: center; color: var(--muted); font-size: .9rem; padding: 40px 24px 60px; border-top: 1px solid var(--line); }
+
+/* reveal-on-scroll (one restrained effect) */
+.reveal { opacity: 0; transform: translateY(14px); transition: opacity .6s ease, transform .6s ease; }
+.reveal.in { opacity: 1; transform: none; }
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  .reveal { opacity: 1; transform: none; transition: none; }
+  .btn { transition: none; }
+}

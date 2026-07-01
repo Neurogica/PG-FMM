@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>PG-FMM · Physics-Guided Flow-Map Matching for Precipitation Nowcasting</title>
+<meta name="description" content="PG-FMM decouples storm motion (a frozen Lagrangian physics prior) from fine structure (a few-step flow-map generator) for sharp, physically on-track precipitation nowcasts. ACCV 2026." />
+<meta property="og:title" content="PG-FMM: Physics-Guided Flow-Map Matching for Precipitation Nowcasting" />
+<meta property="og:image" content="assets/eyecatch.png" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Spectral:ital,wght@0,600;0,700;1,400&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<header class="hero">
+  <div class="wrap">
+    <div class="eyebrow">ACCV 2026</div>
+    <h1 class="title">Physics-Guided <span class="kw">Flow-Map Matching</span> for Precipitation Nowcasting</h1>
+    <p class="subtitle">Decouple <em>where</em> the storm goes from <em>what</em> it looks like — sharp, calibrated, and physically on-track.</p>
+    <p class="authors">Author One<sup>1</sup> &nbsp; Author Two<sup>1</sup> &nbsp; Author Three<sup>2</sup></p>
+    <p class="affil"><sup>1</sup>Affiliation A &nbsp;·&nbsp; <sup>2</sup>Affiliation B</p>
+    <nav class="buttons">
+      <a class="btn" href="assets/paper.pdf">📄 Paper</a>
+      <a class="btn ghost" href="https://github.com/Neurogica/PG-FMM">💻 Code</a>
+      <a class="btn ghost" href="#">arXiv</a>
+    </nav>
+  </div>
+</header>
+
+<!-- teaser -->
+<section class="teaser">
+  <div class="wrap reveal">
+    <figure class="fig">
+      <img src="assets/eyecatch.png" alt="Three families of nowcasters: deterministic (blurry), generative without physics (sharp but scattered), and PG-FMM (sharp and on-track)." />
+      <figcaption>Three families of nowcasters. Deterministic models blur; generative models without physics are sharp but drift off-track. <strong>PG-FMM</strong> anchors a generative flow-map head on a physics prior — sharp, diverse, and physically consistent.</figcaption>
+    </figure>
+  </div>
+</section>
+
+<!-- abstract -->
+<section id="abstract">
+  <div class="wrap reveal">
+    <div class="kicker">Abstract</div>
+    <h2>What a nowcast must get right</h2>
+    <p class="lead">Two things — <em>where</em> the storm goes and <em>what</em> its fine structure looks like. Optimizing them together produces conditional-mean blur; optimizing structure alone drifts off the physical track.</p>
+    <p>PG-FMM separates the two. A <strong>frozen Lagrangian advection prior</strong> supplies an interpretable, motion-consistent forecast, and a <strong>few-step flow-map generator</strong> renders the unpredictable detail on top — conditioning on the prior rather than summing it, so neither module contaminates the other. Across four radar benchmarks (SEVIR, MeteoNet, CIKM, Shanghai) PG-FMM improves over the strongest published baseline on <strong>18 of 24</strong> metrics, with the largest gains on the heavy-rain thresholds where mean-seeking models fail — and it does so in only four network evaluations.</p>
+  </div>
+</section>
+
+<!-- method -->
+<section id="method">
+  <div class="wrap reveal">
+    <div class="kicker">Method</div>
+    <h2>Two stages, cleanly decoupled</h2>
+    <figure class="fig fig-wide">
+      <img src="assets/model.png" alt="PG-FMM architecture: Stage 1 Lagrangian prior (U-Net motion + source, semi-Lagrangian rollout); Stage 2 Flow-Map head conditioned on the concatenation of past frames and prior rollout, with a K=16 PMM ensemble." />
+      <figcaption>PG-FMM = a frozen Lagrangian advection prior (Stage 1) conditioning a Flow-Map Matching head (Stage 2). Inference draws a <code>K=16</code> ensemble at <code>NFE=4</code> and combines it with the Probability-Matched Mean.</figcaption>
+    </figure>
+    <div class="stages">
+      <div class="stage">
+        <h3><span class="n">1.</span> Lagrangian prior <em>(physics, frozen)</em></h3>
+        <p>A U-Net predicts a motion field <code>v_t</code> and a source/sink <code>s_t</code>; a semi-Lagrangian rollout <code>R_{t+1} = warp(R_t, v_t) + s_t</code> carries the predictable motion skill.</p>
+      </div>
+      <div class="stage">
+        <h3><span class="n">2.</span> Flow-Map head <em>(generative)</em></h3>
+        <p>A few-step flow-map maps noise → forecast, <em>conditioned</em> on <code>[past ; prior rollout]</code> (concatenation, not summation) — adding calibrated stochastic detail on a physically-anchored forecast.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- qualitative -->
+<section id="results">
+  <div class="wrap reveal">
+    <div class="kicker">Qualitative</div>
+    <h2>Sharp cores kept on track</h2>
+    <p class="lead">Across lead time, PG-FMM preserves the heavy-rain cores that the deterministic baseline attenuates into smooth blobs — including on real high-impact events.</p>
+    <div class="two-col">
+      <figure class="fig">
+        <img src="assets/qual_case.png" alt="SEVIR convective case: GT vs AlphaPre vs Ours across +20..+100 min." />
+        <figcaption>SEVIR convective case — Ours retains the heavy band that AlphaPre washes out.</figcaption>
+      </figure>
+      <figure class="fig">
+        <img src="assets/qual_event.png" alt="Hurricane Barry remnants case: GT vs AlphaPre vs Ours across lead time." />
+        <figcaption>Remnants of Hurricane Barry (15 Jul 2019) — sharp structure preserved over 100 minutes.</figcaption>
+      </figure>
+    </div>
+  </div>
+</section>
+
+<!-- table -->
+<section id="quant">
+  <div class="wrap reveal">
+    <div class="kicker">Quantitative</div>
+    <h2>Results (Table 1, headline)</h2>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>Dataset</th><th>Metric</th><th>AlphaPre</th><th>PG-FMM (ours)</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>SEVIR</td><td>CSI-M ↑</td><td>0.3259</td><td class="ours">0.3614</td></tr>
+          <tr><td>SEVIR</td><td>CSI-219 ↑ <small>(heaviest)</small></td><td>0.0545</td><td class="ours">0.0925</td></tr>
+          <tr><td>MeteoNet</td><td>CSI-M ↑</td><td>0.3824</td><td class="ours">0.4239</td></tr>
+          <tr><td>Shanghai</td><td>CSI-M ↑</td><td>0.4178</td><td class="ours">0.4181</td></tr>
+          <tr><td>CIKM</td><td>CSI-35 ↑ <small>(heavy)</small></td><td>0.2068</td><td class="ours">0.2218</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="note">K = 16 ensemble + Probability-Matched Mean at NFE = 4, under the AlphaPre protocol. Full tables in the paper.</p>
+  </div>
+</section>
+
+<!-- bibtex -->
+<section id="cite">
+  <div class="wrap reveal">
+    <div class="kicker">Citation</div>
+    <h2>BibTeX</h2>
+    <div class="cite">
+      <button class="copy" onclick="copyBib(this)">Copy</button>
+<pre id="bib">@inproceedings{pgfmm2026,
+  title     = {Physics-Guided Flow-Map Matching for Precipitation Nowcasting},
+  author    = {The PG-FMM Authors},
+  booktitle = {Asian Conference on Computer Vision (ACCV)},
+  year      = {2026}
+}</pre>
+    </div>
+  </div>
+</section>
+
+<footer>
+  PG-FMM · Released under the BSD-3-Clause license. Built with the SEVIR, MeteoNet, CIKM, and Shanghai radar benchmarks.
+</footer>
+
+<script>
+  function copyBib(btn){
+    navigator.clipboard.writeText(document.getElementById('bib').innerText)
+      .then(()=>{ btn.textContent='Copied ✓'; setTimeout(()=>btn.textContent='Copy',1600); });
+  }
+  const io = new IntersectionObserver((es)=>es.forEach(e=>{ if(e.isIntersecting){ e.target.classList.add('in'); io.unobserve(e.target);} }),{threshold:.12});
+  document.querySelectorAll('.reveal').forEach(el=>io.observe(el));
+</script>
+</body>
+</html>
