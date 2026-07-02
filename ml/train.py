@@ -96,7 +96,7 @@ def parse_args():
     )
     p.add_argument(
         "--wandb-project",
-        default="r09-accv26-rain-nowcast",
+        default="pgfmm",
         help="W&B project name (only used if --wandb)",
     )
     p.add_argument(
