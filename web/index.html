@@ -4,35 +4,38 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>PG-FMM · Physics-Guided Flow-Map Matching for Precipitation Nowcasting</title>
-<meta name="description" content="PG-FMM decouples storm motion (a frozen Lagrangian physics prior) from fine structure (a few-step flow-map generator) for sharp, physically on-track precipitation nowcasts. ACCV 2026." />
+<meta name="description" content="PG-FMM decouples storm motion (a frozen Lagrangian physics prior) from fine structure (a few-step flow-map generator) for sharp, physically on-track precipitation nowcasts." />
 <meta property="og:title" content="PG-FMM: Physics-Guided Flow-Map Matching for Precipitation Nowcasting" />
 <meta property="og:image" content="assets/eyecatch.png" />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Spectral:ital,wght@0,600;0,700;1,400&display=swap" rel="stylesheet" />
-<link rel="stylesheet" href="style.css" />
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400..700;1,6..72,400..700&family=Source+Serif+4:ital,opsz,wght@0,8..60,400..600;1,8..60,400..600&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/katex.min.css" />
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'\\(',right:'\\)',display:false},{left:'\\[',right:'\\]',display:true}]});"></script>
+<link rel="stylesheet" href="style.css?v=4" />
 <script>document.documentElement.className += " js";</script>
 </head>
 <body>
 
 <header class="hero">
   <div class="wrap">
-    <div class="eyebrow">ACCV 2026</div>
-    <h1 class="title">Physics-Guided <span class="kw">Flow-Map Matching</span> for Precipitation Nowcasting</h1>
+    <h1 class="title"><span class="tline">Physics-Guided Flow-Map Matching</span> <span class="tline">for Precipitation Nowcasting</span></h1>
+    <div class="status">Under Review</div>
     <p class="subtitle">Decouple <em>where</em> the storm goes from <em>what</em> it looks like — sharp, calibrated, and physically on-track.</p>
-    <p class="authors">Author One<sup>1</sup> &nbsp; Author Two<sup>1</sup> &nbsp; Author Three<sup>2</sup></p>
-    <p class="affil"><sup>1</sup>Affiliation A &nbsp;·&nbsp; <sup>2</sup>Affiliation B</p>
+    <p class="review-note">The paper is currently under review; author information and the arXiv link will be added upon acceptance.</p>
     <nav class="buttons">
-      <a class="btn" href="assets/paper.pdf">📄 Paper</a>
-      <a class="btn ghost" href="https://github.com/Neurogica/PG-FMM">💻 Code</a>
-      <a class="btn ghost" href="#">arXiv</a>
+      <a class="btn" href="assets/paper.pdf">Paper</a>
+      <a class="btn" href="https://github.com/Neurogica/PG-FMM">Code</a>
+      <a class="btn is-disabled" href="#" aria-disabled="true">arXiv</a>
     </nav>
   </div>
 </header>
 
 <!-- teaser -->
 <section class="teaser">
-  <div class="wrap reveal">
+  <div class="wrap wide reveal">
     <figure class="fig">
       <img src="assets/eyecatch.png" alt="Three families of nowcasters: deterministic (blurry), generative without physics (sharp but scattered), and PG-FMM (sharp and on-track)." />
       <figcaption>Three families of nowcasters. Deterministic models blur; generative models without physics are sharp but drift off-track. <strong>PG-FMM</strong> anchors a generative flow-map head on a physics prior — sharp, diverse, and physically consistent.</figcaption>
@@ -52,21 +55,25 @@
 
 <!-- method -->
 <section id="method">
-  <div class="wrap reveal">
+  <div class="wrap wide reveal">
     <div class="kicker">Method</div>
     <h2>Two stages, cleanly decoupled</h2>
     <figure class="fig fig-wide">
       <img src="assets/model.png" alt="PG-FMM architecture: Stage 1 Lagrangian prior (U-Net motion + source, semi-Lagrangian rollout); Stage 2 Flow-Map head conditioned on the concatenation of past frames and prior rollout, with a K=16 PMM ensemble." />
-      <figcaption>PG-FMM = a frozen Lagrangian advection prior (Stage 1) conditioning a Flow-Map Matching head (Stage 2). Inference draws a <code>K=16</code> ensemble at <code>NFE=4</code> and combines it with the Probability-Matched Mean.</figcaption>
+      <figcaption>PG-FMM = a frozen Lagrangian advection prior (Stage 1) conditioning a Flow-Map Matching head (Stage 2). Inference draws a \(K=16\) ensemble at \(\mathrm{NFE}=4\) and combines it with the Probability-Matched Mean.</figcaption>
     </figure>
     <div class="stages">
       <div class="stage">
         <h3><span class="n">1.</span> Lagrangian prior <em>(physics, frozen)</em></h3>
-        <p>A U-Net predicts a motion field <code>v_t</code> and a source/sink <code>s_t</code>; a semi-Lagrangian rollout <code>R_{t+1} = warp(R_t, v_t) + s_t</code> carries the predictable motion skill.</p>
+        <p>The predictable part of the field is transport. The prior enforces the advection equation</p>
+        <p class="eq">\[ \partial_t R + (v \cdot \nabla)\, R = s, \]</p>
+        <p>where a U-Net predicts the motion field \(v_t\) and source/sink \(s_t\), and a semi-Lagrangian scheme rolls the field forward: \( R_{t+1} = \operatorname{warp}(R_t, v_t) + s_t \).</p>
       </div>
       <div class="stage">
-        <h3><span class="n">2.</span> Flow-Map head <em>(generative)</em></h3>
-        <p>A few-step flow-map maps noise → forecast, <em>conditioned</em> on <code>[past ; prior rollout]</code> (concatenation, not summation) — adding calibrated stochastic detail on a physically-anchored forecast.</p>
+        <h3><span class="n">2.</span> Flow-Map Matching <em>(generative)</em></h3>
+        <p>Rather than integrating an instantaneous velocity field step by step, the head learns the <em>two-time solution operator</em> \( \Phi_\theta \) of the generative flow along the interpolant \( x_s = (1-s)\,x_0 + s\,x_1 \):</p>
+        <p class="eq">\[ \mathcal{L}_{\mathrm{FMM}} = \mathbb{E}_{\,0 \le r < t \le 1}\, \bigl\lVert\, \Phi_\theta\!\left(x_t,\, t \!\to\! r \mid c\right) - x_r \,\bigr\rVert_2^2, \qquad c = \bigl[\, R_{1:T_{\mathrm{in}}} \,;\; R^{\mathrm{prior}} \,\bigr]. \]</p>
+        <p>One network then serves any step budget — a single large shortcut or a few refinements — since valid maps compose: \( \Phi_{t \to r} = \Phi_{m \to r} \circ \Phi_{t \to m} \).</p>
       </div>
     </div>
   </div>
@@ -74,11 +81,11 @@
 
 <!-- qualitative -->
 <section id="results">
-  <div class="wrap reveal">
+  <div class="wrap wide reveal">
     <div class="kicker">Qualitative</div>
     <h2>Sharp cores kept on track</h2>
     <p class="lead">Across lead time, PG-FMM preserves the heavy-rain cores that the deterministic baseline attenuates into smooth blobs — including on real high-impact events.</p>
-    <div class="two-col">
+    <div class="qual-figs">
       <figure class="fig">
         <img src="assets/qual_case.png" alt="SEVIR convective case: GT vs AlphaPre vs Ours across +20..+100 min." />
         <figcaption>SEVIR convective case — Ours retains the heavy band that AlphaPre washes out.</figcaption>
@@ -93,24 +100,108 @@
 
 <!-- table -->
 <section id="quant">
-  <div class="wrap reveal">
+  <div class="wrap wide reveal">
     <div class="kicker">Quantitative</div>
-    <h2>Results (Table 1, headline)</h2>
-    <div class="table-wrap">
-      <table>
-        <thead>
-          <tr><th>Dataset</th><th>Metric</th><th>AlphaPre</th><th>PG-FMM (ours)</th></tr>
-        </thead>
-        <tbody>
-          <tr><td>SEVIR</td><td>CSI-M ↑</td><td>0.3259</td><td class="ours">0.3614</td></tr>
-          <tr><td>SEVIR</td><td>CSI-219 ↑ <small>(heaviest)</small></td><td>0.0545</td><td class="ours">0.0925</td></tr>
-          <tr><td>MeteoNet</td><td>CSI-M ↑</td><td>0.3824</td><td class="ours">0.4239</td></tr>
-          <tr><td>Shanghai</td><td>CSI-M ↑</td><td>0.4178</td><td class="ours">0.4181</td></tr>
-          <tr><td>CIKM</td><td>CSI-35 ↑ <small>(heavy)</small></td><td>0.2068</td><td class="ours">0.2218</td></tr>
-        </tbody>
-      </table>
+    <h2>Comparison on four radar benchmarks</h2>
+    <p class="lead">AlphaPre evaluation protocol (shared evaluator, thresholds, and test splits); our model uses a 16-member probability-matched-mean ensemble. <strong>Bold</strong> = best, <span class="u-demo">underline</span> = second best. ND = no explicit dynamics module, D = with one. Our method wins all six metrics on SEVIR and MeteoNet, four of six on Shanghai, and two of six on CIKM (<strong>18 / 24</strong> overall).</p>
+
+    <div class="tblock">
+      <h3>SEVIR</h3>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Model</th><th>Type</th><th>CSI-M ↑</th><th>CSI-181 ↑</th><th>CSI-219 ↑</th><th>HSS ↑</th><th>SSIM ↑</th><th>MSE ↓</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>ConvGRU</td><td>ND</td><td>0.2903</td><td>0.0879</td><td>0.0350</td><td>0.3619</td><td>0.6100</td><td>368.34</td></tr>
+            <tr><td>MAU</td><td>ND</td><td>0.3076</td><td>0.1071</td><td>0.0516</td><td>0.3863</td><td>0.6505</td><td>355.48</td></tr>
+            <tr><td>SimVP</td><td>ND</td><td>0.3108</td><td>0.1106</td><td>0.0517</td><td>0.3924</td><td>0.6508</td><td>383.56</td></tr>
+            <tr><td>FourCastNet</td><td>ND</td><td>0.2686</td><td>0.0717</td><td>0.0339</td><td>0.3355</td><td>0.5976</td><td>410.27</td></tr>
+            <tr><td>Earthformer</td><td>ND</td><td>0.2892</td><td>0.0844</td><td>0.0245</td><td>0.3665</td><td>0.6633</td><td>360.11</td></tr>
+            <tr><td>PhyDNet</td><td>D</td><td>0.3017</td><td>0.1040</td><td>0.0278</td><td>0.3812</td><td>0.6532</td><td>357.63</td></tr>
+            <tr><td>Earthfarsser</td><td>D</td><td>0.3004</td><td>0.0992</td><td>0.0413</td><td>0.3829</td><td>0.6327</td><td>388.91</td></tr>
+            <tr><td>NowcastNet</td><td>D</td><td>0.2791</td><td>0.0770</td><td>0.0351</td><td>0.3512</td><td>0.6839</td><td>412.94</td></tr>
+            <tr><td>DiffCast</td><td>D</td><td>0.3050</td><td>0.1300</td><td class="u">0.0582</td><td>0.3996</td><td>0.6482</td><td>559.59</td></tr>
+            <tr><td>AlphaPre</td><td>D</td><td class="u">0.3259</td><td class="u">0.1332</td><td>0.0545</td><td class="u">0.4110</td><td class="u">0.6884</td><td class="u">345.18</td></tr>
+            <tr class="ours-row"><td>Ours</td><td>D</td><td class="b">0.3614</td><td class="b">0.1859</td><td class="b">0.0925</td><td class="b">0.4593</td><td class="b">0.7291</td><td class="b">315.67</td></tr>
+          </tbody>
+        </table>
+      </div>
     </div>
-    <p class="note">K = 16 ensemble + Probability-Matched Mean at NFE = 4, under the AlphaPre protocol. Full tables in the paper.</p>
+
+    <div class="tblock">
+      <h3>MeteoNet</h3>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Model</th><th>Type</th><th>CSI-M ↑</th><th>CSI-24 ↑</th><th>CSI-32 ↑</th><th>HSS ↑</th><th>SSIM ↑</th><th>MSE ↓</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>ConvGRU</td><td>ND</td><td>0.3401</td><td>0.2990</td><td>0.1431</td><td>0.4667</td><td>0.7833</td><td>12.85</td></tr>
+            <tr><td>MAU</td><td>ND</td><td>0.3233</td><td>0.2839</td><td>0.0997</td><td>0.4452</td><td>0.7897</td><td>12.92</td></tr>
+            <tr><td>SimVP</td><td>ND</td><td>0.3351</td><td>0.3002</td><td>0.1130</td><td>0.4573</td><td>0.7804</td><td>13.45</td></tr>
+            <tr><td>FourCastNet</td><td>ND</td><td>0.3027</td><td>0.2533</td><td>0.1085</td><td>0.4216</td><td>0.6450</td><td>15.05</td></tr>
+            <tr><td>Earthformer</td><td>ND</td><td>0.3205</td><td>0.2884</td><td>0.1237</td><td>0.4491</td><td>0.7772</td><td>14.43</td></tr>
+            <tr><td>PhyDNet</td><td>D</td><td>0.3384</td><td>0.3194</td><td>0.1366</td><td>0.4673</td><td>0.7823</td><td>14.48</td></tr>
+            <tr><td>Earthfarsser</td><td>D</td><td>0.3404</td><td>0.3170</td><td>0.1372</td><td>0.4726</td><td>0.7542</td><td>14.10</td></tr>
+            <tr><td>NowcastNet</td><td>D</td><td>0.3427</td><td>0.3206</td><td>0.1598</td><td>0.4751</td><td>0.7879</td><td>15.64</td></tr>
+            <tr><td>DiffCast</td><td>D</td><td>0.3512</td><td>0.3340</td><td>0.1808</td><td>0.4846</td><td>0.7887</td><td>17.93</td></tr>
+            <tr><td>AlphaPre</td><td>D</td><td class="u">0.3824</td><td class="u">0.3633</td><td class="u">0.2002</td><td class="u">0.5164</td><td class="u">0.7968</td><td class="u">12.74</td></tr>
+            <tr class="ours-row"><td>Ours</td><td>D</td><td class="b">0.4239</td><td class="b">0.4066</td><td class="b">0.2293</td><td class="b">0.5583</td><td class="b">0.8426</td><td class="b">9.25</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="tblock">
+      <h3>Shanghai</h3>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Model</th><th>Type</th><th>CSI-M ↑</th><th>CSI-35 ↑</th><th>CSI-40 ↑</th><th>HSS ↑</th><th>SSIM ↑</th><th>MSE ↓</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>ConvGRU</td><td>ND</td><td>0.3612</td><td>0.3163</td><td>0.2062</td><td>0.4899</td><td>0.7796</td><td>33.56</td></tr>
+            <tr><td>MAU</td><td>ND</td><td>0.3983</td><td>0.3621</td><td>0.2417</td><td>0.5346</td><td>0.7195</td><td>30.40</td></tr>
+            <tr><td>SimVP</td><td>ND</td><td>0.3850</td><td>0.3549</td><td>0.2382</td><td>0.5194</td><td>0.7795</td><td>34.40</td></tr>
+            <tr><td>FourCastNet</td><td>ND</td><td>0.3571</td><td>0.3108</td><td>0.2073</td><td>0.4868</td><td>0.5598</td><td>32.10</td></tr>
+            <tr><td>Earthformer</td><td>ND</td><td>0.3503</td><td>0.3178</td><td>0.1872</td><td>0.4844</td><td>0.7298</td><td>35.57</td></tr>
+            <tr><td>PhyDNet</td><td>D</td><td>0.3654</td><td>0.3236</td><td>0.2176</td><td>0.4957</td><td>0.7751</td><td>36.41</td></tr>
+            <tr><td>Earthfarsser</td><td>D</td><td>0.3926</td><td>0.3608</td><td>0.2343</td><td>0.5330</td><td>0.5405</td><td>32.68</td></tr>
+            <tr><td>NowcastNet</td><td>D</td><td>0.3953</td><td>0.3608</td><td>0.2450</td><td>0.5334</td><td class="u">0.7902</td><td>33.56</td></tr>
+            <tr><td>DiffCast</td><td>D</td><td>0.4089</td><td>0.3740</td><td>0.2606</td><td>0.5476</td><td>0.7879</td><td>36.35</td></tr>
+            <tr><td>AlphaPre</td><td>D</td><td class="u">0.4178</td><td class="b">0.3854</td><td class="u">0.2615</td><td class="b">0.5534</td><td>0.7951</td><td class="u">28.02</td></tr>
+            <tr class="ours-row"><td>Ours</td><td>D</td><td class="b">0.4181</td><td class="u">0.3819</td><td class="b">0.2636</td><td class="u">0.5520</td><td class="b">0.7962</td><td class="b">26.05</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="tblock">
+      <h3>CIKM</h3>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Model</th><th>Type</th><th>CSI-M ↑</th><th>CSI-35 ↑</th><th>CSI-40 ↑</th><th>HSS ↑</th><th>SSIM ↑</th><th>MSE ↓</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>ConvGRU</td><td>ND</td><td>0.3091</td><td>0.2009</td><td>0.1259</td><td>0.4006</td><td>0.6507</td><td>37.13</td></tr>
+            <tr><td>MAU</td><td>ND</td><td>0.3039</td><td>0.2054</td><td>0.1241</td><td>0.3928</td><td>0.6325</td><td>40.74</td></tr>
+            <tr><td>SimVP</td><td>ND</td><td>0.3052</td><td>0.2044</td><td>0.1321</td><td>0.3955</td><td>0.6538</td><td>38.06</td></tr>
+            <tr><td>FourCastNet</td><td>ND</td><td>0.2980</td><td>0.1849</td><td>0.1015</td><td>0.3801</td><td>0.4359</td><td class="u">36.14</td></tr>
+            <tr><td>Earthformer</td><td>ND</td><td>0.3077</td><td>0.2039</td><td>0.1369</td><td>0.4001</td><td>0.6267</td><td>36.49</td></tr>
+            <tr><td>PhyDNet</td><td>D</td><td>0.3038</td><td>0.2052</td><td>0.1287</td><td>0.3931</td><td>0.6541</td><td>39.56</td></tr>
+            <tr><td>Earthfarsser</td><td>D</td><td>0.3000</td><td>0.2046</td><td>0.1259</td><td>0.3911</td><td>0.6373</td><td>39.87</td></tr>
+            <tr><td>NowcastNet</td><td>D</td><td>0.2991</td><td>0.1940</td><td>0.1188</td><td>0.3865</td><td class="b">0.6713</td><td>40.96</td></tr>
+            <tr><td>DiffCast</td><td>D</td><td class="u">0.3159</td><td>0.2009</td><td class="u">0.1457</td><td>0.4085</td><td>0.6499</td><td>42.78</td></tr>
+            <tr><td>AlphaPre</td><td>D</td><td class="b">0.3194</td><td class="u">0.2068</td><td>0.1416</td><td class="b">0.4137</td><td class="u">0.6568</td><td class="b">35.18</td></tr>
+            <tr class="ours-row"><td>Ours</td><td>D</td><td>0.3149</td><td class="b">0.2218</td><td class="b">0.1540</td><td class="u">0.4115</td><td>0.6252</td><td>42.18</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <p class="note">The two highest (heavy-rain) thresholds are 181/219 (SEVIR), 24/32 (MeteoNet), and 35/40 (Shanghai and CIKM). \(K=16\) ensemble + Probability-Matched Mean at \(\mathrm{NFE}=4\).</p>
   </div>
 </section>
 
@@ -121,18 +212,19 @@
     <h2>BibTeX</h2>
     <div class="cite">
       <button class="copy" onclick="copyBib(this)">Copy</button>
-<pre id="bib">@inproceedings{pgfmm2026,
-  title     = {Physics-Guided Flow-Map Matching for Precipitation Nowcasting},
-  author    = {The PG-FMM Authors},
-  booktitle = {Asian Conference on Computer Vision (ACCV)},
-  year      = {2026}
+<pre id="bib">@misc{pgfmm2026,
+  title  = {Physics-Guided Flow-Map Matching for Precipitation Nowcasting},
+  author = {Anonymous},
+  note   = {Under review},
+  year   = {2026}
 }</pre>
     </div>
+    <p class="note">A final citation entry will be provided upon acceptance.</p>
   </div>
 </section>
 
 <footer>
-  PG-FMM · Released under the BSD-3-Clause license. Built with the SEVIR, MeteoNet, CIKM, and Shanghai radar benchmarks.
+  PG-FMM · Released under the BSD-3-Clause license.
 </footer>
 
 <script>
