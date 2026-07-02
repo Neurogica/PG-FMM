@@ -151,8 +151,8 @@ pre {
 footer { text-align: center; color: var(--muted); font-size: .9rem; padding: 40px 24px 60px; border-top: 1px solid var(--line); }
 
 /* reveal-on-scroll (one restrained effect) */
-.reveal { opacity: 0; transform: translateY(14px); transition: opacity .6s ease, transform .6s ease; }
-.reveal.in { opacity: 1; transform: none; }
+html.js .reveal { opacity: 0; transform: translateY(14px); transition: opacity .6s ease, transform .6s ease; }
+html.js .reveal.in { opacity: 1; transform: none; }
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }
   .reveal { opacity: 1; transform: none; transition: none; }
