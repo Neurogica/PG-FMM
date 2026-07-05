@@ -66,7 +66,7 @@ from omegaconf import OmegaConf  # noqa: E402
 from torch.utils.data import DataLoader  # noqa: E402
 from tqdm import tqdm  # noqa: E402
 
-from pgfmm.bridge import SBNowcastConfig, SBNowcastRunner  # noqa: E402
+from pgfmm.model import PGFMMConfig, PGFMMRunner  # noqa: E402
 from pgfmm.data import PIXEL_SCALES, THRESHOLDS, dataset_kwargs_from_cfg, get_dataset  # noqa: E402
 from pgfmm.data.paired import MultiCachePairedDataset, PairedDataset  # noqa: E402
 
@@ -246,7 +246,7 @@ def probability_matched_mean(samples: torch.Tensor) -> torch.Tensor:
 
 
 # ---------------------------------------------------------------------- helpers
-def build_runner_from_cfg(cfg) -> SBNowcastRunner:
+def build_runner_from_cfg(cfg) -> PGFMMRunner:
     ddbm = cfg.get("ddbm", {})
     flow_map = cfg.get("flow_map", {})
     physics = cfg.get("physics", {})
@@ -265,7 +265,7 @@ def build_runner_from_cfg(cfg) -> SBNowcastRunner:
         "bridge_channels",
         default_bridge_channels,
     )
-    sb_cfg = SBNowcastConfig(
+    runner_cfg = PGFMMConfig(
         T_in=cfg.dataset.T_in,
         T_out=cfg.dataset.T_out,
         img_channels=1,
@@ -358,10 +358,10 @@ def build_runner_from_cfg(cfg) -> SBNowcastRunner:
         preservation_tolerance=skill.get("preservation_tolerance", 0.04),
         lambda_calibration_mse=skill.get("lambda_calibration_mse", 0.0),
     )
-    return SBNowcastRunner(sb_cfg)
+    return PGFMMRunner(runner_cfg)
 
 
-def load_state_dict(runner: SBNowcastRunner, ckpt: dict, use_ema: bool):
+def load_state_dict(runner: PGFMMRunner, ckpt: dict, use_ema: bool):
     """Load model state into runner.  Handles ema-pytorch's state-dict layout."""
     if use_ema and "ema" in ckpt:
         # ema-pytorch saves keys prefixed with "ema_model.<orig_key>" (and a few
@@ -670,7 +670,7 @@ def main():
                 n_done += gt.shape[0]
         dt = time.time() - t0
         print(f"\n[time] {n_done} samples in {dt:.1f}s  ({n_done / dt:.2f} samp/s)")
-        base = args.method or cfg.get("method", "sb_nowcast")
+        base = args.method or cfg.get("method", "pgfmm")
         for (a, g, gm), ev in evals.items():
             ev.done(is_main_process=True)
             tag = f"{base}-pmm{int(round(a * 100)):03d}"
@@ -792,7 +792,7 @@ def main():
         metrics = summarize_evaluator(evaluator, THRESHOLDS[name])
         row = {
             "timestamp_utc": datetime.now(timezone.utc).isoformat(),
-            "method": args.method or cfg.get("method", "sb_nowcast"),
+            "method": args.method or cfg.get("method", "pgfmm"),
             "run_name": args.run_name or args.ckpt.parents[1].name,
             "git_branch": git_value(["rev-parse", "--abbrev-ref", "HEAD"]),
             "git_commit": git_value(["rev-parse", "--short", "HEAD"]),

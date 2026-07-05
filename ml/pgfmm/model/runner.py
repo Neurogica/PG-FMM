@@ -24,7 +24,7 @@ from .unet import NowcastUNet, NowcastUNetConfig
 
 
 @dataclass
-class SBNowcastConfig:
+class PGFMMConfig:
     # data layout
     T_in: int = 5
     T_out: int = 20
@@ -33,7 +33,7 @@ class SBNowcastConfig:
     img_size: int = 128
 
     # SB schedule
-    bridge_type: str = "i2sb"  # i2sb | ddbm | flow_map
+    bridge_type: str = "flow_map"  # i2sb | ddbm | flow_map
     interval: int = 1000
     beta_max: float = 0.3
     ot_ode: bool = False  # True → deterministic OT-flow variant
@@ -235,10 +235,10 @@ class SBNowcastConfig:
         return total + self.cond_extra_T_external
 
 
-class SBNowcastRunner(nn.Module):
+class PGFMMRunner(nn.Module):
     """All trainable state in one nn.Module so ``accelerate.prepare(runner)`` works."""
 
-    def __init__(self, cfg: SBNowcastConfig, device: torch.device | str = "cpu"):
+    def __init__(self, cfg: PGFMMConfig, device: torch.device | str = "cpu"):
         super().__init__()
         self.cfg = cfg
 

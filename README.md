@@ -24,9 +24,9 @@ The result is sharp, calibrated, and physically on-track: it improves over the s
 ```
 PG-FMM/
 ├── ml/          # method code (installable `pgfmm` package) + train / eval + configs
-│   ├── pgfmm/           bridge/ (flow-map matching), source/ (Lagrangian prior),
-│   │                    data/, metrics/, losses.py
-│   ├── configs/         v22 + Lagrangian-prior configs for sevir/meteo/cikm/shanghai
+│   ├── pgfmm/           model/ (flow-map matching head), source/ (Lagrangian prior),
+│   │                    data/, losses.py
+│   ├── configs/         PG-FMM + Lagrangian-prior configs for sevir/meteo/cikm/shanghai
 │   ├── train.py         training entrypoint
 │   ├── eval.py          evaluation entrypoint (AlphaPre-protocol metrics)
 │   └── scripts/         cache builders (frozen prior rollout, baselines)

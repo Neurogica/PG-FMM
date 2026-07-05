@@ -58,8 +58,7 @@ Reports CSI (per threshold + mean), HSS, SSIM, MSE, CRPS, LPIPS under the AlphaP
 
 | Module | Contents |
 |---|---|
-| `pgfmm.bridge` | Flow-Map Matching runner (`SBNowcastRunner`), U-Net, samplers, schedules |
+| `pgfmm.model` | Flow-Map Matching runner (`PGFMMRunner`), U-Net, samplers, schedules |
 | `pgfmm.source.lagrangian` | Lagrangian advection prior (motion + source, semi-Lagrangian rollout) |
 | `pgfmm.data` | SEVIR / MeteoNet / CIKM / Shanghai loaders, cached-prediction pairing |
 | `pgfmm.losses` | Physics regularizers (mass conservation, smoothness, advection–diffusion) |
-| `pgfmm.metrics` | Table-3-style probabilistic metrics |

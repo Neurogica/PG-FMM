@@ -1,4 +1,4 @@
-"""Dataset loaders for the ACCV26 Schrödinger-Bridge nowcasting project.
+"""Dataset loaders for the PG-FMM (Flow-Map Matching) nowcasting project.
 
 The 4 datasets (SEVIR / MeteoNet / Shanghai_Radar / CIKM_Radar) are loaded
 following the AlphaPre/DiffCast convention:

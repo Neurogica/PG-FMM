@@ -1,18 +1,14 @@
-"""Train SB-Nowcast on SEVIR.
+"""Train the PG-FMM model (two frozen-then-generative stages).
 
 Single-GPU friendly via HuggingFace `accelerate` (auto handles bf16, DDP later).
 
 Examples
 --------
-# 100-step quick sanity
-uv run accelerate launch --mixed_precision=bf16 \
-    experiments/sevir/train_sb.py --config configs/sevir/sb_baseline.yaml \
-    --override train.total_steps=100 train.log_every=10
+# Stage 1 — Lagrangian advection prior (train first, then frozen)
+python ml/train.py --config ml/configs/sevir/lagrangian_prior.yaml --note lagrangian_prior
 
-# Full training
-uv run accelerate launch --mixed_precision=bf16 \
-    experiments/sevir/train_sb.py --config configs/sevir/sb_baseline.yaml \
-    --note repro_v1
+# Stage 2 — Flow-Map Matching head (conditioned on the frozen prior)
+python ml/train.py --config ml/configs/sevir/pgfmm.yaml --note pgfmm
 """
 
 from __future__ import annotations
@@ -37,7 +33,7 @@ from torch.optim import AdamW  # noqa: E402
 from torch.utils.data import DataLoader  # noqa: E402
 from tqdm import tqdm  # noqa: E402
 
-from pgfmm.bridge import SBNowcastConfig, SBNowcastRunner  # noqa: E402
+from pgfmm.model import PGFMMConfig, PGFMMRunner  # noqa: E402
 from pgfmm.data import dataset_kwargs_from_cfg, get_dataset  # noqa: E402
 from pgfmm.data.paired import MultiCachePairedDataset, PairedDataset  # noqa: E402
 
@@ -114,7 +110,7 @@ def parse_args():
     return p.parse_args()
 
 
-def build_runner(cfg) -> SBNowcastRunner:
+def build_runner(cfg) -> PGFMMRunner:
     ddbm = cfg.get("ddbm", {})
     flow_map = cfg.get("flow_map", {})
     physics = cfg.get("physics", {})
@@ -133,7 +129,7 @@ def build_runner(cfg) -> SBNowcastRunner:
         "bridge_channels",
         default_bridge_channels,
     )
-    sb_cfg = SBNowcastConfig(
+    runner_cfg = PGFMMConfig(
         T_in=cfg.dataset.T_in,
         T_out=cfg.dataset.T_out,
         img_channels=1,
@@ -226,7 +222,7 @@ def build_runner(cfg) -> SBNowcastRunner:
         preservation_tolerance=skill.get("preservation_tolerance", 0.04),
         lambda_calibration_mse=skill.get("lambda_calibration_mse", 0.0),
     )
-    return SBNowcastRunner(sb_cfg)
+    return PGFMMRunner(runner_cfg)
 
 
 def main():
@@ -327,7 +323,7 @@ def main():
     # ---- model + optim ------------------------------------------------
     runner = build_runner(cfg)
     # Keep the training section available to validation after the runner
-    # has been converted to a plain SBNowcastConfig.  This avoids adding
+    # has been converted to a plain PGFMMConfig.  This avoids adding
     # non-model bookkeeping fields to the dataclass.
     runner._train_cfg = cfg.train
     n_params = sum(p.numel() for p in runner.parameters())
