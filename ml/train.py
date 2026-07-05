@@ -111,7 +111,7 @@ def parse_args():
 
 
 def build_runner(cfg) -> PGFMMRunner:
-    ddbm = cfg.get("ddbm", {})
+    transport = cfg.transport
     flow_map = cfg.get("flow_map", {})
     physics = cfg.get("physics", {})
     skill = cfg.get("skill", {})
@@ -120,39 +120,23 @@ def build_runner(cfg) -> PGFMMRunner:
     motion = cfg.get("motion", {})
     residual_transform = residual.get("transform", "pixel")
     img_channels = cfg.dataset.get("img_channels", 1)
-    default_bridge_channels = {
+    default_state_channels = {
         "pixel": img_channels,
         "fft_ri": 2 * img_channels,
         "fft_low_detail": 3 * img_channels,
     }.get(residual_transform, img_channels)
-    bridge_channels = residual.get(
-        "bridge_channels",
-        default_bridge_channels,
+    state_channels = residual.get(
+        "state_channels",
+        default_state_channels,
     )
     runner_cfg = PGFMMConfig(
         T_in=cfg.dataset.T_in,
         T_out=cfg.dataset.T_out,
         img_channels=1,
-        bridge_channels=bridge_channels,
+        state_channels=state_channels,
         img_size=cfg.dataset.img_size,
-        bridge_type=cfg.bridge.get("type", "i2sb"),
-        interval=cfg.bridge.interval,
-        beta_max=cfg.bridge.beta_max,
-        ot_ode=cfg.bridge.ot_ode,
-        prior_kind=cfg.bridge.prior_kind,
-        ddbm_pred_mode=ddbm.get("pred_mode", "vp"),
-        ddbm_sigma_data=ddbm.get("sigma_data", 0.5),
-        ddbm_sigma_min=ddbm.get("sigma_min", 1.0e-4),
-        ddbm_sigma_max=ddbm.get("sigma_max", 1.0),
-        ddbm_beta_d=ddbm.get("beta_d", 2.0),
-        ddbm_beta_min=ddbm.get("beta_min", 0.1),
-        ddbm_cov_xy=ddbm.get("cov_xy", 0.0),
-        ddbm_rho=ddbm.get("rho", 7.0),
-        ddbm_weight_schedule=ddbm.get("weight_schedule", "bridge_karras"),
-        ddbm_churn_step_ratio=ddbm.get("churn_step_ratio", 0.0),
-        ddbm_guidance=ddbm.get("guidance", 1.0),
-        ddbm_sampler=ddbm.get("sampler", "dbim"),
-        ddbm_eta=ddbm.get("eta", 0.0),
+        interval=transport.interval,
+        prior_kind=transport.prior_kind,
         flow_map_noise_scale=flow_map.get("noise_scale", 1.0),
         flow_map_min_delta=flow_map.get("min_delta", 0.05),
         flow_map_direct_prob=flow_map.get("direct_prob", 0.25),
@@ -172,9 +156,9 @@ def build_runner(cfg) -> PGFMMRunner:
         lambda_ssa=flow_map.get("lambda_ssa", 0.0),
         ssa_cutoff=int(flow_map.get("ssa_cutoff", 16)),
         lambda_psd=flow_map.get("lambda_psd", 0.0),
-        cond_x1=cfg.bridge.cond_x1,
-        cond_extra_x1_external=bool(cfg.bridge.get("cond_extra_x1_external", False)),
-        cond_extra_T_external=cfg.bridge.get("cond_extra_T_external", 0),
+        cond_x1=transport.cond_x1,
+        cond_extra_x1_external=bool(transport.get("cond_extra_x1_external", False)),
+        cond_extra_T_external=transport.get("cond_extra_T_external", 0),
         motion_prior=bool(motion.get("enabled", False)),
         motion_prior_base_channels=motion.get("base_channels", 96),
         motion_prior_channel_mult=tuple(motion.get("channel_mult", [1, 2, 4, 4])),
@@ -200,7 +184,7 @@ def build_runner(cfg) -> PGFMMRunner:
         residual_norm_max=residual.get("norm_max", 2.0),
         residual_norm_disagreement=residual.get("norm_disagreement", 4.0),
         residual_posterior_shrinkage=bool(residual.get("posterior_shrinkage", False)),
-        residual_bridge_var=residual.get("bridge_var", 0.0025),
+        residual_prior_var=residual.get("prior_var", 0.0025),
         residual_target_posterior_shrinkage=bool(residual.get("target_posterior_shrinkage", False)),
         residual_posterior_strength=residual.get("posterior_strength", 1.0),
         residual_intensity_var_weight=residual.get("intensity_var_weight", 0.0),
@@ -232,7 +216,7 @@ def main():
         cfg = OmegaConf.merge(cfg, OmegaConf.from_dotlist(list(args.override)))
     set_seed(args.seed)
 
-    exp_name = f"sb_{cfg.dataset.name}_{args.note}"
+    exp_name = f"pgfmm_{cfg.dataset.name}_{args.note}"
     exp_dir = Path(os.environ.get("PGFMM_OUT", ROOT / "runs")) / cfg.dataset.name / exp_name
     ckpt_dir = exp_dir / "checkpoints"
     ckpt_dir.mkdir(parents=True, exist_ok=True)
@@ -272,8 +256,8 @@ def main():
     ds_kw = dataset_kwargs_from_cfg(cfg.dataset)
     train_ds = get_dataset(cfg.dataset.name, split="train", img_size=cfg.dataset.img_size, **ds_kw)
     val_ds = get_dataset(cfg.dataset.name, split="val", img_size=cfg.dataset.img_size, **ds_kw)
-    use_paired = cfg.bridge.prior_kind in ("external", "external_residual") or bool(
-        cfg.bridge.get("cond_extra_x1_external", False)
+    use_paired = cfg.transport.prior_kind in ("external", "external_residual") or bool(
+        cfg.transport.get("cond_extra_x1_external", False)
     )
     if use_paired:
         # Paired mode: each item is (frames, precomputed_pred)
@@ -549,11 +533,11 @@ def run_validation(runner, val_dl, accelerator, max_batches=20, use_paired=False
         flow_map_mse for backward compatibility, but residual nowcasting
         runs can select ``train.val_metric=calibration_mse`` so
         checkpoints are chosen by final forecast risk rather than by the
-        bridge-space residual basis.
+        flow-map-space residual basis.
     """
     cfg = accelerator.unwrap_model(runner).cfg
     train_cfg = getattr(accelerator.unwrap_model(runner), "_train_cfg", None)
-    is_flow_map = getattr(cfg, "bridge_type", "ddbm") == "flow_map"
+    is_flow_map = True
     val_metric = "flow_map_mse"
     if train_cfg is not None:
         val_metric = str(train_cfg.get("val_metric", val_metric))

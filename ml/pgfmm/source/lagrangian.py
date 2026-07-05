@@ -7,7 +7,7 @@ radar frames:
 
 where ``v_t`` is a learned dense velocity field and ``s_t`` is a learned
 growth/decay source term.  The resulting rollout is intended to be the
-``x_1`` endpoint for a source-to-target diffusion bridge.
+``x_1`` prior endpoint / conditioning for the Flow-Map Matching head.
 """
 
 from __future__ import annotations

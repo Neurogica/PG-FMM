@@ -1,4 +1,4 @@
-"""Conditional 2D U-Net used by the SB nowcasting model.
+"""Conditional 2D U-Net used by the flow-map nowcasting model.
 
 We treat time as a *channel* dimension and condition on the past frames by
 concatenation.  The backbone is ``diffusers.UNet2DModel`` so we inherit
@@ -7,11 +7,11 @@ out of the box.
 
 Tensor shapes
 -------------
-* ``x``     : ``(B, T_out * C, H, W)``  — the bridge state at step ``t``
+* ``x``     : ``(B, T_out * C, H, W)``  — the flow-map state at time ``t``
 * ``cond``  : ``(B, T_in  * C, H, W)``  — past frames stacked into channels
-* ``step``  : ``(B,)``                  — discrete bridge index (long tensor)
+* ``step``  : ``(B,)``                  — flow-map time (long index or float)
 * ``noise_levels`` : 1-D LUT mapping integer step → continuous time fed to the
-  U-Net's sinusoidal embedding (``≃`` what I²SB does).
+  U-Net's sinusoidal embedding.
 
 The wrapper performs ``cat([x, cond], dim=1)`` if a condition is supplied.
 """
@@ -30,14 +30,14 @@ class NowcastUNetConfig:
     T_in: int = 5
     T_out: int = 20
     img_channels: int = 1
-    bridge_channels: int = 1
+    state_channels: int = 1
     img_size: int = 128
     base_channels: int = 64
     channel_mult: tuple[int, ...] = (1, 2, 4, 8)
     attention_resolutions: tuple[int, ...] = (16, 8)
     num_res_blocks: int = 2
     dropout: float = 0.0
-    interval: int = 1000  # number of bridge steps for the time embedding LUT
+    interval: int = 1000  # time-discretisation scale for the time embedding LUT
     cond_x1: bool = True
     cond_extra_T: int = 0  # # of extra T-frames to concat as condition
     # (e.g. T_out for an AlphaPre forecast). 0 = disabled.
@@ -49,29 +49,29 @@ class NowcastUNetConfig:
 
 
 class NowcastUNet(nn.Module):
-    """A diffusers UNet2DModel wired for SB nowcasting.
+    """A diffusers UNet2DModel wired for flow-map nowcasting.
 
     The wrapper:
       1. concatenates ``cond`` (past frames) onto ``x`` along the channel dim,
       2. translates integer ``step`` to a continuous timestep via ``noise_levels``,
-      3. returns the U-Net's epsilon-style output reshaped back to ``(B, T_out*C, H, W)``.
+      3. returns the U-Net's output reshaped back to ``(B, T_out*C, H, W)``.
 
-    The output is treated as the I²SB regression target ``label = (x_t - x_0) / σ_fwd[t]``.
+    The output is the flow map's estimate of the destination state ``x_r``.
     """
 
     def __init__(self, cfg: NowcastUNetConfig):
         super().__init__()
         self.cfg = cfg
 
-        in_ch = cfg.T_out * cfg.bridge_channels
+        in_ch = cfg.T_out * cfg.state_channels
         cond_ch = (cfg.T_in * cfg.img_channels) if cfg.cond_x1 else 0
         extra_ch = cfg.cond_extra_T * cfg.img_channels  # e.g. AlphaPre forecast
         time_cond_ch = cfg.time_cond_channels
         self_cond_ch = cfg.self_cond_channels
-        out_ch = cfg.T_out * cfg.bridge_channels
+        out_ch = cfg.T_out * cfg.state_channels
 
         # diffusers down/up block selection: 'AttnDownBlock2D' uses self-attention.
-        # We mirror I²SB / guided-diffusion: attention only at the smaller spatial
+        # Following guided-diffusion: attention only at the smaller spatial
         # resolutions specified by ``attention_resolutions``.
         block_out = tuple(cfg.base_channels * m for m in cfg.channel_mult)
         n_levels = len(block_out)
@@ -118,10 +118,10 @@ class NowcastUNet(nn.Module):
         else:
             self.gate_head = None
 
-        # Step → continuous timestep LUT (paper: t0=1e-4, T=1.0).
+        # Step → continuous timestep LUT (t0=1e-4, T=1.0).
         # We pass the SCALED (× interval) value to UNet2DModel; the embedding
-        # there expects a number in roughly the same magnitude as the diffusion
-        # step.  This matches I²SB's `noise_levels[step] * interval`.
+        # there expects a number in roughly the same magnitude as the discrete
+        # time index.
         noise_levels = torch.linspace(1e-4, 1.0, cfg.interval) * cfg.interval
         self.register_buffer("noise_levels", noise_levels, persistent=False)
 
@@ -208,10 +208,9 @@ class NowcastUNet(nn.Module):
             self_cond=self_cond,
         )
 
-        # I²SB passes integer bridge indices, while DDBM passes the official
-        # continuous preconditioned timestep (1000 * 0.25 * log sigma).
-        # Keep the old LUT path for integer tensors so existing checkpoints are
-        # unchanged.
+        # Integer step tensors are looked up in the LUT; float tensors carry the
+        # already-scaled continuous flow-map time and are used directly.  Keeping
+        # both paths preserves compatibility with existing checkpoints.
         if step.dtype in (torch.int8, torch.int16, torch.int32, torch.int64, torch.long):
             t = self.noise_levels[step].to(x.dtype)
         else:
@@ -219,7 +218,7 @@ class NowcastUNet(nn.Module):
         out = self.unet(x_in, timestep=t).sample
 
         if x_was_5d:
-            out = out.unflatten(1, (cfg.T_out, cfg.bridge_channels))
+            out = out.unflatten(1, (cfg.T_out, cfg.state_channels))
         return out
 
     def gate(
@@ -245,5 +244,5 @@ class NowcastUNet(nn.Module):
         logits = self.gate_head(x_in)
         gate = torch.sigmoid(logits)
         if x_was_5d:
-            gate = gate.unflatten(1, (cfg.T_out, cfg.bridge_channels))
+            gate = gate.unflatten(1, (cfg.T_out, cfg.state_channels))
         return gate

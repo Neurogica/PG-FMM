@@ -1,4 +1,4 @@
-"""Learned physics-source models for source-to-target diffusion bridges."""
+"""Learned physics-source models providing the prior for the Flow-Map head."""
 
 from .lagrangian import (
     LagrangianSourceConfig,

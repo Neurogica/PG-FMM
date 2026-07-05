@@ -1,8 +1,8 @@
-"""Bridge endpoint ``x_1`` (the *prior*) construction strategies.
+"""Transport source endpoint ``x_1`` (the *prior*) construction strategies.
 
-The Schrödinger bridge transports ``x_1 → x_0``; choosing ``x_1`` well is the
-single most important design knob.  We provide several lightweight options that
-do **not** require a separately trained backbone.
+The flow map transports the source ``x_1`` to the forecast ``x_0``; choosing
+``x_1`` well is an important design knob.  We provide several lightweight
+options that do **not** require a separately trained backbone.
 
 All builders receive past frames ``y_in`` of shape ``(B, T_in, C, H, W)`` and
 target length ``T_out`` and return ``x1`` of shape ``(B, T_out, C, H, W)`` to

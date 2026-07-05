@@ -5,7 +5,7 @@
 #   R_{t+1} = warp(R_t, v_t) + s_t
 #
 # After training, cache forecasts with scripts/cache_lagrangian_source.py and
-# use them as x_1 in sb_ddbm_lagrangian_source_bridge_v1_official.yaml.
+# use them as the x_1 prior for the Flow-Map head (configs/sevir/pgfmm.yaml).
 
 dataset:
   name: sevir

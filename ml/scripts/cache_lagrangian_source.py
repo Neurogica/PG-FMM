@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Cache learned Lagrangian source forecasts for the diffusion bridge.
+"""Cache learned Lagrangian source forecasts for the Flow-Map head.
 
 Output layout matches ``scripts/cache_predictions.py`` so the existing
 ``PairedDataset`` can feed it to ``prior_kind: external`` unchanged.

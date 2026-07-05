@@ -1,8 +1,8 @@
 """Wrapper Dataset that pairs each frame sequence with a cached backbone prediction.
 
-Used by the SB-residual training loop (Idea C): for each ground-truth sample
-we hand the SB the corresponding pre-computed AlphaPre / DiffCast / SimVP /
-... output.  The bridge then transports
+Used by the residual training loop: for each ground-truth sample we hand the
+flow map the corresponding pre-computed AlphaPre / DiffCast / SimVP /
+... output.  The flow map then transports
 
     x_1 = backbone_pred  →  x_0 = ground_truth
 
@@ -106,7 +106,7 @@ class PairedDataset(Dataset):
 class MultiCachePairedDataset(Dataset):
     """``base_dataset`` + primary prediction cache + extra conditioning caches.
 
-    The first cache is the actual bridge endpoint/backbone prediction
+    The first cache is the actual prior endpoint/backbone prediction
     (e.g. AlphaPre). Additional caches are concatenated along the temporal
     dimension and used only as extra conditioning, not as the residual base.
 

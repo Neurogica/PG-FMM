@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Pre-compute deterministic-backbone predictions and cache them to h5.
 
-Used to feed AlphaPre / DiffCast / SimVP / etc. predictions as the bridge
-endpoint ``x_1`` for our SB-residual training (Idea C / DiffCast-style).
+Used to feed AlphaPre / DiffCast / SimVP / etc. predictions as the prior
+endpoint ``x_1`` for our residual Flow-Map training (DiffCast-style).
 
 Cached layout (one file per split):
 

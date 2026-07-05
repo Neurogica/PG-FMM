@@ -1,6 +1,6 @@
 """High-level glue: build everything and expose ``train_step`` / ``sample``.
 
-Mirrors I²SB's ``Runner`` but stripped down for single-GPU + nowcasting:
+Stripped down for single-GPU + nowcasting:
 * no DDP boilerplate (we let ``accelerate`` handle distribution if needed)
 * no FID/ResNet eval (we'll plug in CSI / CRPS metrics in ``src/metrics/``)
 * single ``cond`` mode = past-frames concatenation
@@ -16,10 +16,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from ..source import LagrangianSourceConfig, LagrangianSourceNet
-from .ddbm import DDBMBridge, DDBMConfig
-from .diffusion import I2SBDiffusion
 from .prior import build_prior
-from .schedule import make_symmetric_beta_schedule, space_indices
 from .unet import NowcastUNet, NowcastUNetConfig
 
 
@@ -29,30 +26,13 @@ class PGFMMConfig:
     T_in: int = 5
     T_out: int = 20
     img_channels: int = 1
-    bridge_channels: int = 1
+    state_channels: int = 1
     img_size: int = 128
 
-    # SB schedule
-    bridge_type: str = "flow_map"  # i2sb | ddbm | flow_map
+    # Flow-map time discretisation.  ``interval`` scales the continuous time
+    # fed to the U-Net's step embedding and the sampling-step LUT.
     interval: int = 1000
-    beta_max: float = 0.3
-    ot_ode: bool = False  # True → deterministic OT-flow variant
 
-    # DDBM / DBIM-family bridge settings.  Defaults mirror official DDBM's VP
-    # image-translation setup (ext_repos/DDBM/args.sh).
-    ddbm_pred_mode: str = "vp"
-    ddbm_sigma_data: float = 0.5
-    ddbm_sigma_min: float = 1.0e-4
-    ddbm_sigma_max: float = 1.0
-    ddbm_beta_d: float = 2.0
-    ddbm_beta_min: float = 0.1
-    ddbm_cov_xy: float = 0.0
-    ddbm_rho: float = 7.0
-    ddbm_weight_schedule: str = "bridge_karras"
-    ddbm_churn_step_ratio: float = 0.0
-    ddbm_guidance: float = 1.0
-    ddbm_sampler: str = "dbim"
-    ddbm_eta: float = 0.0
     flow_map_noise_scale: float = 1.0
     flow_map_min_delta: float = 0.05
     flow_map_direct_prob: float = 0.25
@@ -114,7 +94,7 @@ class PGFMMConfig:
     # Disabled by default.
     lambda_psd: float = 0.0
 
-    # Bridge endpoint construction
+    # Transport endpoint construction
     prior_kind: str = "last_frame"  # last_frame | mean_past | linear_extrapolation
 
     # Network
@@ -128,7 +108,7 @@ class PGFMMConfig:
     # supplied forecast (e.g. AlphaPre prediction) is also concatenated to the
     # network's condition channel.  Without this, residual-mode nets see no
     # backbone signal and cannot model the residual structure (we observed this
-    # empirically: residual SB without it ≡ vanilla SB).
+    # empirically: the residual flow map without it collapses to the vanilla one).
     cond_extra_x1_external: bool = False
     cond_extra_T_external: int = 0  # optional extra cached priors, e.g. flow warp
 
@@ -163,7 +143,7 @@ class PGFMMConfig:
     residual_norm_max: float = 2.0
     residual_norm_disagreement: float = 4.0
     residual_posterior_shrinkage: bool = False
-    residual_bridge_var: float = 0.0025
+    residual_prior_var: float = 0.0025
     residual_target_posterior_shrinkage: bool = False
     residual_posterior_strength: float = 1.0
     residual_intensity_var_weight: float = 0.0
@@ -173,7 +153,7 @@ class PGFMMConfig:
     # and used as sigma_bb in BRC instead of the (AlphaPre - motion)^2 proxy.
     use_learned_backbone_uncertainty: bool = False
 
-    # Optional small physics regulariser.  All zero keeps vanilla SB/DDBM.
+    # Optional small physics regulariser.  All zero keeps the plain flow map.
     lambda_mass: float = 0.0
     lambda_smooth: float = 0.0
     lambda_diffusion: float = 0.0
@@ -201,7 +181,7 @@ class PGFMMConfig:
             T_in=self.T_in,
             T_out=self.T_out,
             img_channels=self.img_channels,
-            bridge_channels=self.bridge_channels,
+            state_channels=self.state_channels,
             img_size=self.img_size,
             base_channels=self.base_channels,
             channel_mult=tuple(self.channel_mult),
@@ -211,11 +191,10 @@ class PGFMMConfig:
             interval=self.interval,
             cond_x1=self.cond_x1,
             cond_extra_T=cond_extra_T,
-            time_cond_channels=2 if self.bridge_type == "flow_map" else 0,
+            # Constant (t, r) source/destination time planes for the flow map.
+            time_cond_channels=2,
             self_cond_channels=(
-                self.T_out * self.img_channels
-                if self.flow_map_self_conditioning and self.bridge_type == "flow_map"
-                else 0
+                self.T_out * self.img_channels if self.flow_map_self_conditioning else 0
             ),
             use_residual_gate=self.use_residual_gate,
             gate_init_bias=self.gate_init_bias,
@@ -247,33 +226,8 @@ class PGFMMRunner(nn.Module):
         if cfg.motion_prior and cfg.cond_extra_T_external < cfg.T_out:
             cfg.cond_extra_T_external = cfg.T_out
 
-        if cfg.bridge_type == "i2sb":
-            betas = make_symmetric_beta_schedule(cfg.interval, beta_max=cfg.beta_max)
-            self.diffusion = I2SBDiffusion(betas, device="cpu")
-        elif cfg.bridge_type == "ddbm":
-            self.diffusion = DDBMBridge(
-                DDBMConfig(
-                    pred_mode=cfg.ddbm_pred_mode,
-                    sigma_data=cfg.ddbm_sigma_data,
-                    sigma_min=cfg.ddbm_sigma_min,
-                    sigma_max=cfg.ddbm_sigma_max,
-                    beta_d=cfg.ddbm_beta_d,
-                    beta_min=cfg.ddbm_beta_min,
-                    cov_xy=cfg.ddbm_cov_xy,
-                    rho=cfg.ddbm_rho,
-                    weight_schedule=cfg.ddbm_weight_schedule,
-                    churn_step_ratio=cfg.ddbm_churn_step_ratio,
-                    guidance=cfg.ddbm_guidance,
-                    sampler=cfg.ddbm_sampler,
-                    eta=cfg.ddbm_eta,
-                )
-            )
-        elif cfg.bridge_type == "flow_map":
-            # Flow Map Matching directly learns the two-time solution operator
-            # Phi_{t->r}(x_t | cond), so no diffusion/SB helper is required.
-            self.diffusion = None
-        else:
-            raise ValueError(f"unknown bridge_type={cfg.bridge_type!r}")
+        # Flow Map Matching directly learns the two-time solution operator
+        # Phi_{t->r}(x_t | cond); no auxiliary transport helper is required.
         self.net = NowcastUNet(cfg.unet_cfg())
 
         # ---- Physics-informed advection prior (optional) ----
@@ -320,8 +274,8 @@ class PGFMMRunner(nn.Module):
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """``frames`` shape ``(B, T_in+T_out, C, H, W)`` → ``(x_0, x_1, cond)``.
 
-        * ``x_0`` = the bridge **target** distribution
-        * ``x_1`` = the bridge **prior** distribution
+        * ``x_0`` = the transport **target** distribution (forecast endpoint)
+        * ``x_1`` = the transport **source** distribution (noise endpoint)
         * ``cond`` = past frames (used as concat condition)  ``(B, T_in, C, H, W)``
 
         Behaviour depends on ``cfg.prior_kind``:
@@ -331,11 +285,11 @@ class PGFMMRunner(nn.Module):
 
         ``external``
             x_0 = future ground truth, x_1 = caller-provided forecast
-            (e.g. AlphaPre).  Bridge transports forecast → ground truth.
+            (e.g. AlphaPre).  The flow map transports forecast → ground truth.
 
         ``external_residual``  (DiffCast-style)
             x_0 = (future ground truth − caller-provided forecast) = residual
-            x_1 = zeros (residual prior).  Bridge transports zero → residual.
+            x_1 = zeros (residual source).  The flow map transports zero → residual.
             The caller-provided forecast is added back at sampling time so
             the deterministic backbone's MSE quality is preserved.
         """
@@ -393,80 +347,19 @@ class PGFMMRunner(nn.Module):
             cond_extra_external = self._resolve_motion_prior(
                 frames[:, : cfg.T_in].contiguous(), None
             )
-        x_0, x_1, cond = self.split_boundary(
+        x_0, _x_1, cond = self.split_boundary(
             frames,
             x1_external=x1_external,
             cond_extra_external=cond_extra_external,
         )
-        B = x_0.shape[0]
 
-        if cfg.bridge_type == "ddbm":
-            return self._train_step_ddbm(
-                x_0,
-                x_1,
-                cond,
-                x1_external=x1_external,
-                cond_extra_external=cond_extra_external,
-            )
-        if cfg.bridge_type == "flow_map":
-            return self._train_step_flow_map(
-                x_0,
-                cond,
-                x1_external=x1_external,
-                cond_extra_external=cond_extra_external,
-                global_step=global_step,
-            )
-
-        # x_t flattened to (B, T_out*C, H, W) so the bridge math is shape-agnostic
-        x_0f = x_0.flatten(1, 2)
-        x_1f = x_1.flatten(1, 2)
-
-        # uniformly random bridge step per sample
-        step = torch.randint(0, cfg.interval, (B,), device=x_0f.device)
-
-        # forward bridge sample (Eq.11)
-        xt = self.diffusion.q_sample(step, x_0f, x_1f, ot_ode=cfg.ot_ode)
-        # regression target (Eq.12)
-        label = self.diffusion.compute_label(step, x_0f, xt)
-
-        cond_extra = self._build_cond_extra(x1_external, cond_extra_external)
-
-        # network expects 5-D ((B, T_out, C, H, W)); we keep it flat and let the
-        # wrapper reshape internally when needed
-        pred = self.net(
-            xt.unflatten(1, (cfg.T_out, cfg.bridge_channels)),
-            step,
-            cond=cond,
-            cond_extra=cond_extra,
-        ).flatten(1, 2)
-
-        loss = F.mse_loss(pred, label)
-        total_loss = loss
-        log = {"total_loss": total_loss, "mse": loss.detach()}
-
-        if self._uses_physics():
-            pred_x0 = self.diffusion.compute_pred_x0(step, xt, pred, clamp=None)
-            pred_x0 = pred_x0.unflatten(1, (cfg.T_out, cfg.bridge_channels))
-            final_pred = self._to_final_forecast(
-                pred_x0,
-                x1_external,
-                cond_extra_external,
-            )
-            phys, parts = self._physics_loss_bundle(
-                final_pred.clamp(0.0, 1.0),
-                lambda_mass=cfg.lambda_mass,
-                lambda_smooth=cfg.lambda_smooth,
-                lambda_diffusion=cfg.lambda_diffusion,
-                diffusion_kappa=cfg.diffusion_kappa,
-            )
-            total_loss = total_loss + phys
-            log = {
-                "total_loss": total_loss,
-                "mse": loss.detach(),
-                "physics": phys.detach(),
-                **{f"phys_{k}": v.detach() for k, v in parts.items()},
-            }
-        return log
+        return self._train_step_flow_map(
+            x_0,
+            cond,
+            x1_external=x1_external,
+            cond_extra_external=cond_extra_external,
+            global_step=global_step,
+        )
 
     def _uses_physics(self) -> bool:
         cfg = self.cfg
@@ -622,7 +515,7 @@ class PGFMMRunner(nn.Module):
         (LTAS, Lead-Time-Adaptive Stochasticity) we modulate the per-frame
         sigma linearly from ``noise_scale_min`` (near-deterministic short
         lead) to ``noise_scale_max`` (fully generative long lead).  The
-        returned tensor has shape ``(1, T_out * bridge_channels, 1, 1)``
+        returned tensor has shape ``(1, T_out * state_channels, 1, 1)``
         so it broadcasts against the flattened ``(B, T_out*C, H, W)``
         residual / noise tensors used everywhere in the Flow Map paths.
         """
@@ -630,7 +523,7 @@ class PGFMMRunner(nn.Module):
         if not cfg.flow_map_lead_time_stochasticity:
             return float(cfg.flow_map_noise_scale)
         T = int(cfg.T_out)
-        C = int(cfg.bridge_channels)
+        C = int(cfg.state_channels)
         device = like.device
         dtype = like.dtype
         if T <= 1:
@@ -688,7 +581,7 @@ class PGFMMRunner(nn.Module):
 
         When AlphaPre and the motion prior agree, the source endpoint is treated
         as high precision and the residual correction is shrunk.  When they
-        disagree, source uncertainty is larger and the bridge correction is
+        disagree, source uncertainty is larger and the flow-map correction is
         allowed to contribute more.
         """
         cfg = self.cfg
@@ -718,7 +611,7 @@ class PGFMMRunner(nn.Module):
             source_var = source_var + intensity_w * intensity.pow(
                 float(cfg.residual_intensity_var_power)
             )
-        bridge_var = like.new_tensor(float(cfg.residual_bridge_var)).clamp_min(1.0e-8)
+        bridge_var = like.new_tensor(float(cfg.residual_prior_var)).clamp_min(1.0e-8)
         weight = source_var / (source_var + bridge_var)
         if force:
             return weight
@@ -730,7 +623,7 @@ class PGFMMRunner(nn.Module):
         return (1.0 - strength) + strength * weight
 
     def _encode_residual(self, residual: torch.Tensor) -> torch.Tensor:
-        """Map pixel residuals to the bridge state space."""
+        """Map pixel residuals to the flow-map state space."""
         if self.cfg.residual_transform == "pixel":
             return residual
         if self.cfg.residual_transform == "fft_ri":
@@ -745,7 +638,7 @@ class PGFMMRunner(nn.Module):
         raise ValueError(f"unknown residual_transform={self.cfg.residual_transform!r}")
 
     def _decode_residual(self, residual_state: torch.Tensor) -> torch.Tensor:
-        """Map bridge state residuals back to pixel residuals."""
+        """Map flow-map state residuals back to pixel residuals."""
         if self.cfg.residual_transform == "pixel":
             return residual_state
         if self.cfg.residual_transform == "fft_ri":
@@ -781,8 +674,8 @@ class PGFMMRunner(nn.Module):
 
     @staticmethod
     def _physics_loss_bundle(*args, **kwargs):
-        # Lazy import avoids src.jepa.__init__ -> latent_sb -> src.bridge.runner
-        # circular imports when the bridge package is imported by itself.
+        # Lazy import keeps the model package importable on its own without
+        # pulling in the loss module's dependencies at construction time.
         from pgfmm.losses import physics_loss_bundle
 
         return physics_loss_bundle(*args, **kwargs)
@@ -793,7 +686,7 @@ class PGFMMRunner(nn.Module):
         x1_external: torch.Tensor | None,
         cond_extra_external: torch.Tensor | None = None,
     ) -> torch.Tensor:
-        """Map bridge-space x0 prediction to pixel forecast space."""
+        """Map flow-map-space x0 prediction to pixel forecast space."""
         if self.cfg.prior_kind == "external":
             return self._decode_residual(pred_x0)
         if self.cfg.prior_kind == "external_residual":
@@ -906,97 +799,6 @@ class PGFMMRunner(nn.Module):
             parts["skill_calibration_mse"] = zero
         return total, parts
 
-    def _train_step_ddbm(
-        self,
-        x_0: torch.Tensor,
-        x_1: torch.Tensor,
-        cond: torch.Tensor,
-        x1_external: torch.Tensor | None = None,
-        cond_extra_external: torch.Tensor | None = None,
-    ) -> dict[str, torch.Tensor]:
-        cfg = self.cfg
-        x_0f = x_0.flatten(1, 2)
-        x_1f = x_1.flatten(1, 2)
-        sigmas = self.diffusion.sample_sigmas(x_0f.shape[0], x_0f.device)
-        cond_extra = self._build_cond_extra(x1_external, cond_extra_external)
-
-        def model_fn(x_t: torch.Tensor, t_cont: torch.Tensor) -> torch.Tensor:
-            return self.net(
-                x_t.unflatten(1, (cfg.T_out, cfg.bridge_channels)),
-                t_cont,
-                cond=cond,
-                cond_extra=cond_extra,
-            ).flatten(1, 2)
-
-        loss, denoised, parts = self.diffusion.training_losses(
-            model_fn, x_0f, x_1f, sigmas, return_xt=cfg.use_residual_gate
-        )
-        parts.pop("_x_t", None)
-        parts.pop("_sigmas", None)
-        total_loss = loss
-        log = {"total_loss": total_loss, **parts}
-        pred_x0 = denoised.unflatten(1, (cfg.T_out, cfg.bridge_channels))
-        gated_pred_x0, gate = self._apply_residual_gate(pred_x0, cond, cond_extra)
-        final_pred = self._to_final_forecast(
-            gated_pred_x0,
-            x1_external,
-            cond_extra_external,
-        ).clamp(0.0, 1.0)
-        if cfg.prior_kind in ("external", "external_residual"):
-            gt = self._to_final_forecast(x_0, x1_external, cond_extra_external)
-        else:
-            gt = x_0
-        alphapre_anchor = (
-            x1_external.clamp(0.0, 1.0)
-            if x1_external is not None and cfg.prior_kind in ("external", "external_residual")
-            else None
-        )
-        skill_loss, skill_parts = self._skill_loss_bundle(
-            final_pred,
-            gt.clamp(0.0, 1.0),
-            alphapre=alphapre_anchor,
-        )
-        gate_loss = pred_x0.new_zeros(())
-        if gate is not None and cfg.lambda_gate_l1 > 0:
-            gate_loss = gate.mean()
-            total_loss = total_loss + cfg.lambda_gate_l1 * gate_loss
-        if skill_loss.requires_grad or skill_loss.item() != 0.0:
-            total_loss = total_loss + skill_loss
-            log = {
-                "total_loss": total_loss,
-                **parts,
-                "skill": skill_loss.detach(),
-                **{k: v.detach() for k, v in skill_parts.items()},
-            }
-            if gate is not None:
-                log["gate_mean"] = gate.detach().mean()
-                log["gate_l1"] = gate_loss.detach()
-        elif gate is not None:
-            log["total_loss"] = total_loss
-            log["gate_mean"] = gate.detach().mean()
-            log["gate_l1"] = gate_loss.detach()
-        if self._uses_physics():
-            phys, phys_parts = self._physics_loss_bundle(
-                final_pred.clamp(0.0, 1.0),
-                lambda_mass=cfg.lambda_mass,
-                lambda_smooth=cfg.lambda_smooth,
-                lambda_diffusion=cfg.lambda_diffusion,
-                diffusion_kappa=cfg.diffusion_kappa,
-            )
-            total_loss = total_loss + phys
-            log = {
-                "total_loss": total_loss,
-                **parts,
-                "skill": skill_loss.detach(),
-                **{k: v.detach() for k, v in skill_parts.items()},
-                "physics": phys.detach(),
-                **{f"phys_{k}": v.detach() for k, v in phys_parts.items()},
-            }
-            if gate is not None:
-                log["gate_mean"] = gate.detach().mean()
-                log["gate_l1"] = gate_loss.detach()
-        return log
-
     def _train_step_flow_map(
         self,
         x_0: torch.Tensor,
@@ -1065,7 +867,7 @@ class PGFMMRunner(nn.Module):
                         like=x_t,
                     )
                     warm_pred = self.net(
-                        x_t.unflatten(1, (cfg.T_out, cfg.bridge_channels)),
+                        x_t.unflatten(1, (cfg.T_out, cfg.state_channels)),
                         self._flow_map_model_time(warm_t, like=x_t),
                         cond=cond,
                         cond_extra=cond_extra,
@@ -1074,11 +876,11 @@ class PGFMMRunner(nn.Module):
                     ).detach()
                 # For self-conditioning, the model expects a per-pixel
                 # coarse prediction in (B, T_out * img_channels, H, W).
-                # In the residual / fft regime bridge_channels may differ
+                # In the residual / fft regime state_channels may differ
                 # from img_channels; we only support pixel-space
                 # self-conditioning in v13, where they match.
-                assert cfg.bridge_channels == cfg.img_channels, (
-                    "flow_map_self_conditioning requires bridge_channels == "
+                assert cfg.state_channels == cfg.img_channels, (
+                    "flow_map_self_conditioning requires state_channels == "
                     "img_channels (pixel-space output)."
                 )
                 warm_pred_flat = warm_pred.flatten(1, 2)
@@ -1086,7 +888,7 @@ class PGFMMRunner(nn.Module):
                 self_cond = torch.where(mask, warm_pred_flat, self_cond)
 
         pred = self.net(
-            x_t.unflatten(1, (cfg.T_out, cfg.bridge_channels)),
+            x_t.unflatten(1, (cfg.T_out, cfg.state_channels)),
             self._flow_map_model_time(t, like=x_t),
             cond=cond,
             cond_extra=cond_extra,
@@ -1108,7 +910,7 @@ class PGFMMRunner(nn.Module):
             s_b = s.view(view)
             x_s = (1.0 - s_b) * x_0f + s_b * x_1f
             pred_ts = self.net(
-                x_t.unflatten(1, (cfg.T_out, cfg.bridge_channels)),
+                x_t.unflatten(1, (cfg.T_out, cfg.state_channels)),
                 self._flow_map_model_time(t, like=x_t),
                 cond=cond,
                 cond_extra=cond_extra,
@@ -1118,7 +920,7 @@ class PGFMMRunner(nn.Module):
                 pred_ts.detach() if cfg.flow_map_consistency_detach_midpoint else pred_ts
             )
             pred_sr = self.net(
-                pred_ts_for_comp.unflatten(1, (cfg.T_out, cfg.bridge_channels)),
+                pred_ts_for_comp.unflatten(1, (cfg.T_out, cfg.state_channels)),
                 self._flow_map_model_time(s, like=x_t),
                 cond=cond,
                 cond_extra=cond_extra,
@@ -1133,7 +935,7 @@ class PGFMMRunner(nn.Module):
 
         # ----- Spectral Sharpness Anchor (SSA) -------------------------
         # On direct-endpoint samples (r=0) the network's prediction IS the
-        # predicted residual in bridge space.  Decoding + adding the
+        # predicted residual in flow-map space.  Decoding + adding the
         # AlphaPre backbone gives the final pixel-space forecast, and we
         # match its high-frequency Fourier content to the GT's.  This is
         # the third paper contribution -- it directly attacks the
@@ -1148,7 +950,7 @@ class PGFMMRunner(nn.Module):
         ):
             direct_count_ssa = int(direct_mask.sum().item())
             if direct_count_ssa > 0:
-                pred_d = pred[direct_mask].unflatten(1, (cfg.T_out, cfg.bridge_channels))
+                pred_d = pred[direct_mask].unflatten(1, (cfg.T_out, cfg.state_channels))
                 x1_d = x1_external.to(pred.device)[direct_mask]
                 cond_extra_d = (
                     cond_extra_external.to(pred.device)[direct_mask]
@@ -1158,7 +960,7 @@ class PGFMMRunner(nn.Module):
                 gt_d = self._to_final_forecast(
                     x_0[direct_mask]
                     if x_0.ndim == 5
-                    else x_0f[direct_mask].unflatten(1, (cfg.T_out, cfg.bridge_channels)),
+                    else x_0f[direct_mask].unflatten(1, (cfg.T_out, cfg.state_channels)),
                     x1_d,
                     cond_extra_d,
                 )
@@ -1186,7 +988,7 @@ class PGFMMRunner(nn.Module):
         if float(cfg.lambda_psd) > 0.0:
             direct_count_psd = int(direct_mask.sum().item())
             if direct_count_psd > 0:
-                pred_d = pred[direct_mask].unflatten(1, (cfg.T_out, cfg.bridge_channels))
+                pred_d = pred[direct_mask].unflatten(1, (cfg.T_out, cfg.state_channels))
                 x1_d = x1_external.to(pred.device)[direct_mask] if x1_external is not None else None
                 cond_extra_d = (
                     cond_extra_external.to(pred.device)[direct_mask]
@@ -1196,7 +998,7 @@ class PGFMMRunner(nn.Module):
                 gt_src = (
                     x_0[direct_mask]
                     if x_0.ndim == 5
-                    else x_0f[direct_mask].unflatten(1, (cfg.T_out, cfg.bridge_channels))
+                    else x_0f[direct_mask].unflatten(1, (cfg.T_out, cfg.state_channels))
                 )
                 gt_d_psd = self._to_final_forecast(gt_src, x1_d, cond_extra_d)
                 final_pred_psd = self._to_final_forecast(pred_d, x1_d, cond_extra_d)
@@ -1259,7 +1061,7 @@ class PGFMMRunner(nn.Module):
                     like=fresh_x_t,
                 )
                 pred_k = self.net(
-                    fresh_x_t.unflatten(1, (cfg.T_out, cfg.bridge_channels)),
+                    fresh_x_t.unflatten(1, (cfg.T_out, cfg.state_channels)),
                     self._flow_map_model_time(t_d, like=fresh_x_t),
                     cond=cond_d,
                     cond_extra=cond_extra_d,
@@ -1298,7 +1100,7 @@ class PGFMMRunner(nn.Module):
             or cfg.lambda_preservation > 0.0
             or cfg.lambda_calibration_mse > 0.0
         ):
-            pred_endpoint = pred.unflatten(1, (cfg.T_out, cfg.bridge_channels))[direct_mask]
+            pred_endpoint = pred.unflatten(1, (cfg.T_out, cfg.state_channels))[direct_mask]
             cond_endpoint = cond[direct_mask]
             x1_endpoint = x1_external[direct_mask] if x1_external is not None else None
             extra_endpoint = (
@@ -1343,7 +1145,7 @@ class PGFMMRunner(nn.Module):
                 log["gate_l1"] = gate_loss.detach()
 
         if self._uses_physics():
-            pred_state = pred.unflatten(1, (cfg.T_out, cfg.bridge_channels))
+            pred_state = pred.unflatten(1, (cfg.T_out, cfg.state_channels))
             final_pred = self._to_final_forecast(
                 pred_state,
                 x1_external,
@@ -1397,7 +1199,7 @@ class PGFMMRunner(nn.Module):
         cond_extra_external: torch.Tensor | None = None,
         nfe: int | None = None,
         log_count: int = 1,
-        ot_ode: bool | None = None,
+        ot_ode: bool | None = None,  # accepted for CLI compatibility; unused by the flow map
         clamp: tuple[float, float] | None = (0.0, 1.0),
         verbose: bool = True,
     ) -> torch.Tensor:
@@ -1406,23 +1208,23 @@ class PGFMMRunner(nn.Module):
         Behaviour depends on ``cfg.prior_kind``:
 
         ``last_frame`` / ``mean_past`` / ``linear_extrapolation``
-            x_1 built from past frames; bridge yields the prediction directly.
+            x_1 built from past frames; the flow map yields the prediction directly.
 
         ``external``
-            x_1 = ``x1_external`` (e.g. AlphaPre forecast); bridge transports
+            x_1 = ``x1_external`` (e.g. AlphaPre forecast); the flow map transports
             forecast → ground truth and returns the result directly.
 
         ``external_residual``  (DiffCast-style, **most robust for nowcasting**)
-            x_1 = zeros, bridge yields the residual r̂; we add ``x1_external``
+            x_1 = zeros, the flow map yields the residual r̂; we add ``x1_external``
             back to obtain the final forecast (=  ŷ + r̂).  This preserves
-            the backbone's MSE-good behaviour and lets SB only model the
+            the backbone's MSE-good behaviour and lets the flow map only model the
             stochastic high-frequency residual.
 
         Returns ``(B, T_out, C, H, W)`` clamped to ``clamp`` (default ``[0, 1]``).
         """
+        del ot_ode  # deterministic-sampler flag from the legacy CLI; no-op here
         cfg = self.cfg
         nfe = nfe or cfg.nfe
-        ot_ode = cfg.ot_ode if ot_ode is None else ot_ode
 
         device = self.device
         cond = cond_frames.to(device)
@@ -1431,14 +1233,12 @@ class PGFMMRunner(nn.Module):
         if self.motion_prior is not None and cond_extra_external is None:
             cond_extra_external = self._resolve_motion_prior(cond, None)
 
-        # ---- build the bridge endpoint x_1 ----
+        # ---- build the transport source endpoint x_1 ----
         if cfg.prior_kind == "external":
             if x1_external is None:
                 raise ValueError("prior_kind='external' requires x1_external")
             x1_external = x1_external.to(device)
             x_1 = self._encode_residual(x1_external)
-            # Spectral bridge states are unconstrained; clamp only after iFFT.
-            inner_clamp = clamp if cfg.residual_transform == "pixel" else None
         elif cfg.prior_kind == "external_residual":
             if x1_external is None:
                 raise ValueError("prior_kind='external_residual' requires x1_external")
@@ -1446,152 +1246,84 @@ class PGFMMRunner(nn.Module):
             x_1 = x1_external.new_zeros(
                 x1_external.shape[0],
                 cfg.T_out,
-                cfg.bridge_channels,
+                cfg.state_channels,
                 x1_external.shape[-2],
                 x1_external.shape[-1],
             )
-            # During SB sampling the predicted x_0 lives in residual-space and
-            # can be negative; only clamp at the very end after adding ŷ.
-            inner_clamp = None
         else:
             x_1 = build_prior(cfg.prior_kind, cond_frames, cfg.T_out).to(device)
-            inner_clamp = clamp
 
         x_1f = x_1.flatten(1, 2)
         cond_extra = self._build_cond_extra(x1_external, cond_extra_external)
 
-        if cfg.bridge_type == "flow_map":
-            # Flow-Map Matching is intrinsically generative; the initial state
-            # is always a fresh Gaussian sample regardless of prior_kind.  The
-            # prior_kind only controls whether a deterministic backbone is
-            # added back to the final prediction afterwards.
-            B = x_1f.shape[0]
-            H, W = x_1f.shape[-2:]
-            init_buffer = torch.randn(
+        # Flow-Map Matching is intrinsically generative; the initial state
+        # is always a fresh Gaussian sample regardless of prior_kind.  The
+        # prior_kind only controls whether a deterministic backbone is
+        # added back to the final prediction afterwards.
+        B = x_1f.shape[0]
+        H, W = x_1f.shape[-2:]
+        init_buffer = torch.randn(
+            B,
+            cfg.T_out * cfg.state_channels,
+            H,
+            W,
+            device=device,
+            dtype=x_1f.dtype,
+        )
+        current = init_buffer * self._flow_map_noise_scale(like=init_buffer)
+
+        # ----- RIN-style self-conditioning warm-up at inference -----
+        # Pass 1 (with zeros) gives the model its own coarse prediction;
+        # Pass 2 (the main flow-map iteration) consumes it as self_cond.
+        # We compute pass 1 as a single direct-endpoint forward at t=1,
+        # r=0 (the model is trained to handle this configuration), and
+        # then reuse the resulting coarse map for every step of pass 2.
+        self_cond = None
+        if cfg.flow_map_self_conditioning:
+            warm_t = torch.full((B,), 1.0, device=device, dtype=x_1f.dtype)
+            warm_r = torch.zeros_like(warm_t)
+            warm_time_cond = self._flow_map_time_cond(
+                warm_t,
+                warm_r,
+                like=current,
+            )
+            warm_self_cond = torch.zeros(
                 B,
-                cfg.T_out * cfg.bridge_channels,
+                cfg.T_out * cfg.img_channels,
                 H,
                 W,
                 device=device,
                 dtype=x_1f.dtype,
             )
-            current = init_buffer * self._flow_map_noise_scale(like=init_buffer)
-
-            # ----- RIN-style self-conditioning warm-up at inference -----
-            # Pass 1 (with zeros) gives the model its own coarse prediction;
-            # Pass 2 (the main flow-map iteration) consumes it as self_cond.
-            # We compute pass 1 as a single direct-endpoint forward at t=1,
-            # r=0 (the model is trained to handle this configuration), and
-            # then reuse the resulting coarse map for every step of pass 2.
-            self_cond = None
-            if cfg.flow_map_self_conditioning:
-                warm_t = torch.full((B,), 1.0, device=device, dtype=x_1f.dtype)
-                warm_r = torch.zeros_like(warm_t)
-                warm_time_cond = self._flow_map_time_cond(
-                    warm_t,
-                    warm_r,
-                    like=current,
-                )
-                warm_self_cond = torch.zeros(
-                    B,
-                    cfg.T_out * cfg.img_channels,
-                    H,
-                    W,
-                    device=device,
-                    dtype=x_1f.dtype,
-                )
-                warm_pred = self.net(
-                    current.unflatten(1, (cfg.T_out, cfg.bridge_channels)),
-                    self._flow_map_model_time(warm_t, like=current),
-                    cond=cond,
-                    cond_extra=cond_extra,
-                    time_cond=warm_time_cond,
-                    self_cond=warm_self_cond,
-                ).flatten(1, 2)
-                self_cond = warm_pred
-
-            times = torch.linspace(1.0, 0.0, int(nfe) + 1, device=device)
-            for i in range(int(nfe)):
-                t = times[i].expand(current.shape[0])
-                r = times[i + 1].expand(current.shape[0])
-                time_cond = self._flow_map_time_cond(t, r, like=current)
-                current = self.net(
-                    current.unflatten(1, (cfg.T_out, cfg.bridge_channels)),
-                    self._flow_map_model_time(t, like=current),
-                    cond=cond,
-                    cond_extra=cond_extra,
-                    time_cond=time_cond,
-                    self_cond=self_cond,
-                ).flatten(1, 2)
-            final = current.unflatten(1, (cfg.T_out, cfg.bridge_channels))
-            if cfg.prior_kind in ("external", "external_residual"):
-                final, _ = self._apply_residual_gate(final.to(device), cond, cond_extra)
-                final = self._to_final_forecast(final.to(device), x1_external, cond_extra_external)
-                if clamp is not None:
-                    final = final.clamp(*clamp)
-            elif clamp is not None:
-                final = final.clamp(*clamp)
-            return final
-
-        if cfg.bridge_type == "ddbm":
-
-            def model_fn(x_t: torch.Tensor, t_cont: torch.Tensor) -> torch.Tensor:
-                return self.net(
-                    x_t.unflatten(1, (cfg.T_out, cfg.bridge_channels)),
-                    t_cont,
-                    cond=cond,
-                    cond_extra=cond_extra,
-                ).flatten(1, 2)
-
-            final = self.diffusion.sample(
-                model_fn,
-                x_1f,
-                steps=nfe,
-                clip_denoised=(inner_clamp is not None),
-                progress=verbose,
-            )
-            final = final.unflatten(1, (cfg.T_out, cfg.bridge_channels))
-            if cfg.prior_kind in ("external", "external_residual"):
-                final, _ = self._apply_residual_gate(final.to(device), cond, cond_extra)
-                final = self._to_final_forecast(final, x1_external, cond_extra_external)
-                if clamp is not None:
-                    final = final.clamp(*clamp)
-            return final
-
-        # Sub-grid of bridge steps for NFE-step sampling (must include 0 & N-1)
-        steps = space_indices(cfg.interval, nfe + 1)
-        assert steps[0] == 0 and steps[-1] == cfg.interval - 1
-
-        def pred_x0_fn(xt: torch.Tensor, step_int: int) -> torch.Tensor:
-            step = torch.full((xt.shape[0],), step_int, device=xt.device, dtype=torch.long)
-            net_out = self.net(
-                xt.unflatten(1, (cfg.T_out, cfg.bridge_channels)),
-                step,
+            warm_pred = self.net(
+                current.unflatten(1, (cfg.T_out, cfg.state_channels)),
+                self._flow_map_model_time(warm_t, like=current),
                 cond=cond,
                 cond_extra=cond_extra,
+                time_cond=warm_time_cond,
+                self_cond=warm_self_cond,
             ).flatten(1, 2)
-            return self.diffusion.compute_pred_x0(step, xt, net_out, clamp=inner_clamp)
+            self_cond = warm_pred
 
-        log_steps = [steps[i] for i in space_indices(len(steps) - 1, log_count)]
-        if 0 not in log_steps:
-            log_steps = [0] + log_steps[1:]
-
-        xs, _ = self.diffusion.ddpm_sampling(
-            steps,
-            pred_x0_fn,
-            x_1f,
-            mask=None,
-            ot_ode=ot_ode,
-            log_steps=log_steps,
-            verbose=verbose,
-        )
-        final = xs[:, 0]  # (B, T_out*C, H, W)
-        final = final.unflatten(1, (cfg.T_out, cfg.bridge_channels))
-
-        # External-residual mode: add the deterministic backbone forecast back.
+        times = torch.linspace(1.0, 0.0, int(nfe) + 1, device=device)
+        for i in range(int(nfe)):
+            t = times[i].expand(current.shape[0])
+            r = times[i + 1].expand(current.shape[0])
+            time_cond = self._flow_map_time_cond(t, r, like=current)
+            current = self.net(
+                current.unflatten(1, (cfg.T_out, cfg.state_channels)),
+                self._flow_map_model_time(t, like=current),
+                cond=cond,
+                cond_extra=cond_extra,
+                time_cond=time_cond,
+                self_cond=self_cond,
+            ).flatten(1, 2)
+        final = current.unflatten(1, (cfg.T_out, cfg.state_channels))
         if cfg.prior_kind in ("external", "external_residual"):
+            final, _ = self._apply_residual_gate(final.to(device), cond, cond_extra)
             final = self._to_final_forecast(final.to(device), x1_external, cond_extra_external)
             if clamp is not None:
                 final = final.clamp(*clamp)
-
+        elif clamp is not None:
+            final = final.clamp(*clamp)
         return final

@@ -1,4 +1,4 @@
-"""Evaluate a trained SB-Nowcast checkpoint using AlphaPre's Evaluator.
+"""Evaluate a trained PG-FMM checkpoint using AlphaPre's Evaluator.
 
 Reusing AlphaPre's evaluator (from ``ext_repos/AlphaPre/utils/metrics.py``)
 guarantees the numbers we report are directly comparable to AlphaPre /
@@ -8,17 +8,17 @@ with the same thresholds and the same pooling).
 Examples
 --------
 # Quick val-loss check on 50 val batches
-uv run python experiments/sevir/eval_sb.py \
-    --ckpt experiments/sevir/Exps/sb_sevir_v1_full/checkpoints/last.pt \
-    --config experiments/sevir/Exps/sb_sevir_v1_full/config.yaml \
+uv run python ml/eval.py \
+    --ckpt experiments/sevir/Exps/pgfmm_sevir_v1_full/checkpoints/last.pt \
+    --config experiments/sevir/Exps/pgfmm_sevir_v1_full/config.yaml \
     --split val --nfe 20 --batch_size 8 --max_batches 50 --use_ema
 
 # Full SEVIR test eval (matches the AlphaPre baseline run)
-uv run python experiments/sevir/eval_sb.py \
-    --ckpt experiments/sevir/Exps/sb_sevir_v1_full/checkpoints/best.pt \
-    --config experiments/sevir/Exps/sb_sevir_v1_full/config.yaml \
+uv run python ml/eval.py \
+    --ckpt experiments/sevir/Exps/pgfmm_sevir_v1_full/checkpoints/best.pt \
+    --config experiments/sevir/Exps/pgfmm_sevir_v1_full/config.yaml \
     --split test --nfe 20 --batch_size 8 --use_ema \
-    2>&1 | tee logs/sb_v1_full_eval.log
+    2>&1 | tee logs/pgfmm_v1_full_eval.log
 """
 
 from __future__ import annotations
@@ -75,7 +75,7 @@ from pgfmm.data.paired import MultiCachePairedDataset, PairedDataset  # noqa: E4
 def parse_args():
     p = argparse.ArgumentParser()
     p.add_argument(
-        "--ckpt", required=True, type=Path, help="Checkpoint .pt produced by train_sb.py"
+        "--ckpt", required=True, type=Path, help="Checkpoint .pt produced by train.py"
     )
     p.add_argument(
         "--config",
@@ -95,7 +95,9 @@ def parse_args():
     p.add_argument("--mixed_precision", default="bf16", choices=["no", "fp16", "bf16"])
     p.add_argument("--use_ema", action="store_true", help="Sample from the EMA-averaged weights")
     p.add_argument(
-        "--ot_ode", action="store_true", help="Use deterministic OT-flow sampler instead of DDPM"
+        "--ot_ode",
+        action="store_true",
+        help="Legacy deterministic-sampler flag; no-op for the flow-map sampler (kept for CLI compatibility)",
     )
     p.add_argument("--override", nargs="*", default=[], help="OmegaConf-style key=value overrides")
     p.add_argument(
@@ -247,7 +249,7 @@ def probability_matched_mean(samples: torch.Tensor) -> torch.Tensor:
 
 # ---------------------------------------------------------------------- helpers
 def build_runner_from_cfg(cfg) -> PGFMMRunner:
-    ddbm = cfg.get("ddbm", {})
+    transport = cfg.transport
     flow_map = cfg.get("flow_map", {})
     physics = cfg.get("physics", {})
     skill = cfg.get("skill", {})
@@ -256,39 +258,23 @@ def build_runner_from_cfg(cfg) -> PGFMMRunner:
     motion = cfg.get("motion", {})
     residual_transform = residual.get("transform", "pixel")
     img_channels = cfg.dataset.get("img_channels", 1)
-    default_bridge_channels = {
+    default_state_channels = {
         "pixel": img_channels,
         "fft_ri": 2 * img_channels,
         "fft_low_detail": 3 * img_channels,
     }.get(residual_transform, img_channels)
-    bridge_channels = residual.get(
-        "bridge_channels",
-        default_bridge_channels,
+    state_channels = residual.get(
+        "state_channels",
+        default_state_channels,
     )
     runner_cfg = PGFMMConfig(
         T_in=cfg.dataset.T_in,
         T_out=cfg.dataset.T_out,
         img_channels=1,
-        bridge_channels=bridge_channels,
+        state_channels=state_channels,
         img_size=cfg.dataset.img_size,
-        bridge_type=cfg.bridge.get("type", "i2sb"),
-        interval=cfg.bridge.interval,
-        beta_max=cfg.bridge.beta_max,
-        ot_ode=cfg.bridge.ot_ode,
-        prior_kind=cfg.bridge.prior_kind,
-        ddbm_pred_mode=ddbm.get("pred_mode", "vp"),
-        ddbm_sigma_data=ddbm.get("sigma_data", 0.5),
-        ddbm_sigma_min=ddbm.get("sigma_min", 1.0e-4),
-        ddbm_sigma_max=ddbm.get("sigma_max", 1.0),
-        ddbm_beta_d=ddbm.get("beta_d", 2.0),
-        ddbm_beta_min=ddbm.get("beta_min", 0.1),
-        ddbm_cov_xy=ddbm.get("cov_xy", 0.0),
-        ddbm_rho=ddbm.get("rho", 7.0),
-        ddbm_weight_schedule=ddbm.get("weight_schedule", "bridge_karras"),
-        ddbm_churn_step_ratio=ddbm.get("churn_step_ratio", 0.0),
-        ddbm_guidance=ddbm.get("guidance", 1.0),
-        ddbm_sampler=ddbm.get("sampler", "dbim"),
-        ddbm_eta=ddbm.get("eta", 0.0),
+        interval=transport.interval,
+        prior_kind=transport.prior_kind,
         flow_map_noise_scale=flow_map.get("noise_scale", 1.0),
         flow_map_min_delta=flow_map.get("min_delta", 0.05),
         flow_map_direct_prob=flow_map.get("direct_prob", 0.25),
@@ -308,9 +294,9 @@ def build_runner_from_cfg(cfg) -> PGFMMRunner:
         lambda_ssa=flow_map.get("lambda_ssa", 0.0),
         ssa_cutoff=int(flow_map.get("ssa_cutoff", 16)),
         lambda_psd=flow_map.get("lambda_psd", 0.0),
-        cond_x1=cfg.bridge.cond_x1,
-        cond_extra_x1_external=bool(cfg.bridge.get("cond_extra_x1_external", False)),
-        cond_extra_T_external=cfg.bridge.get("cond_extra_T_external", 0),
+        cond_x1=transport.cond_x1,
+        cond_extra_x1_external=bool(transport.get("cond_extra_x1_external", False)),
+        cond_extra_T_external=transport.get("cond_extra_T_external", 0),
         motion_prior=bool(motion.get("enabled", False)),
         motion_prior_base_channels=motion.get("base_channels", 96),
         motion_prior_channel_mult=tuple(motion.get("channel_mult", [1, 2, 4, 4])),
@@ -336,7 +322,7 @@ def build_runner_from_cfg(cfg) -> PGFMMRunner:
         residual_norm_max=residual.get("norm_max", 2.0),
         residual_norm_disagreement=residual.get("norm_disagreement", 4.0),
         residual_posterior_shrinkage=bool(residual.get("posterior_shrinkage", False)),
-        residual_bridge_var=residual.get("bridge_var", 0.0025),
+        residual_prior_var=residual.get("prior_var", 0.0025),
         residual_target_posterior_shrinkage=bool(residual.get("target_posterior_shrinkage", False)),
         residual_posterior_strength=residual.get("posterior_strength", 1.0),
         residual_intensity_var_weight=residual.get("intensity_var_weight", 0.0),
@@ -379,9 +365,6 @@ def load_state_dict(runner: PGFMMRunner, ckpt: dict, use_ema: bool):
             f"[ckpt] loaded EMA: {len(new_state)} tensors  "
             f"(missing={len(missing)}, unexpected={len(unexpected)})"
         )
-        # Diffusion buffers (mu_x0/etc.) are persistent=False so they're
-        # absent from ema state; that's fine, they're rebuilt by I2SBDiffusion
-        # at construction time.
     else:
         runner.load_state_dict(ckpt["model"], strict=False)
         print(f"[ckpt] loaded model  (step={ckpt.get('step', '?')})")
@@ -530,8 +513,8 @@ def main():
     name = cfg.dataset.name
     ds_kw = dataset_kwargs_from_cfg(cfg.dataset)
     ds = get_dataset(name, split=args.split, img_size=cfg.dataset.img_size, **ds_kw)
-    use_paired = cfg.bridge.prior_kind in ("external", "external_residual") or bool(
-        cfg.bridge.get("cond_extra_x1_external", False)
+    use_paired = cfg.transport.prior_kind in ("external", "external_residual") or bool(
+        cfg.transport.get("cond_extra_x1_external", False)
     )
     if use_paired:
         cache_dir = ROOT / cfg.dataset.cache_dir
@@ -596,8 +579,8 @@ def main():
             "ckpt": str(args.ckpt),
             "config": str(args.config),
             "cache_dir": str(cfg.dataset.get("cache_dir", "")),
-            "bridge_type": str(cfg.bridge.get("type", "")),
-            "prior_kind": str(cfg.bridge.get("prior_kind", "")),
+            "transport_type": "flow_map",
+            "prior_kind": str(cfg.transport.get("prior_kind", "")),
             "elapsed_sec": round(dt, 3),
             "samples_per_sec": round(n / max(dt, 1e-9), 6),
             **metrics,
@@ -682,7 +665,7 @@ def main():
     # ------ sampling loop ------
     n_done = 0
     t0 = time.time()
-    pbar = tqdm(dl, desc=f"SB sample (NFE={args.nfe})")
+    pbar = tqdm(dl, desc=f"PG-FMM sample (NFE={args.nfe})")
     with torch.no_grad():
         for i, batch in enumerate(pbar):
             if args.max_batches is not None and i >= args.max_batches:
@@ -805,8 +788,8 @@ def main():
             "ckpt": str(args.ckpt),
             "config": str(args.config),
             "cache_dir": str(cfg.dataset.get("cache_dir", "")),
-            "bridge_type": str(cfg.bridge.get("type", "")),
-            "prior_kind": str(cfg.bridge.get("prior_kind", "")),
+            "transport_type": "flow_map",
+            "prior_kind": str(cfg.transport.get("prior_kind", "")),
             "elapsed_sec": round(dt, 3),
             "samples_per_sec": round(n_done / max(dt, 1e-9), 6),
             **metrics,

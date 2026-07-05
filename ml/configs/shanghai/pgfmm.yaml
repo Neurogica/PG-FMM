@@ -5,11 +5,8 @@ dataset:
   img_size: 128
   T_in: 5
   T_out: 20
-bridge:
-  type: flow_map
+transport:
   interval: 1000
-  beta_max: 0.3
-  ot_ode: false
   prior_kind: last_frame
   cond_x1: true
   cond_extra_x1_external: false
@@ -25,7 +22,7 @@ motion:
   freeze: true
 residual:
   transform: pixel
-  bridge_channels: 1
+  state_channels: 1
   normalize: false
 flow_map:
   noise_scale: 1.0
@@ -69,4 +66,3 @@ sample:
   nfe: 4
   residual_scale: 1.0
   clamp: [0.0, 1.0]
-  ot_ode: false
