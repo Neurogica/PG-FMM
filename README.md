@@ -2,9 +2,9 @@
 
 # PG-FMM: Physics-Guided Flow-Map Matching for Precipitation Nowcasting
 
-**ACCV 2026**
+**Under review at ACCV 2026**
 
-[Project page](https://neurogica.github.io/PG-FMM) · [Paper](web/assets/paper.pdf)
+[Project page](web/index.html) · [Paper](web/assets/paper.pdf)
 
 </div>
 

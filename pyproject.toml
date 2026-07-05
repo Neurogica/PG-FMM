@@ -29,9 +29,6 @@ dependencies = [
 # Metrics used by ml/eval.py reuse the AlphaPre benchmark Evaluator (see ml/README.md).
 eval = ["lpips>=0.1.4", "pandas>=2.1"]
 
-[project.urls]
-"Project page" = "https://neurogica.github.io/PG-FMM"
-"Repository" = "https://github.com/Neurogica/PG-FMM"
 
 [build-system]
 requires = ["setuptools>=68"]
