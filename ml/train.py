@@ -209,12 +209,144 @@ def build_runner(cfg) -> PGFMMRunner:
     return PGFMMRunner(runner_cfg)
 
 
+
+# ------------------------------------------------------------- Stage 1: prior
+def train_prior(cfg, args) -> None:
+    """Train the Stage-1 Lagrangian advection prior (configs/*/lagrangian_prior.yaml).
+
+    Dispatched from ``main()`` for configs without a ``transport`` section.
+    Saves ``runs/<dataset>/<note>/checkpoints/{best,last}.pt`` in the format
+    expected by ``PGFMMRunner`` (``motion.ckpt``) and
+    ``ml/scripts/cache_lagrangian_source.py``.
+    """
+    from pgfmm.source.lagrangian import (
+        LagrangianSourceConfig,
+        LagrangianSourceNet,
+        lagrangian_source_loss,
+    )
+
+    exp_dir = Path(os.environ.get("PGFMM_OUT", ROOT / "runs")) / cfg.dataset.name / args.note
+    ckpt_dir = exp_dir / "checkpoints"
+    ckpt_dir.mkdir(parents=True, exist_ok=True)
+    OmegaConf.save(cfg, exp_dir / "config.yaml")
+
+    accelerator = Accelerator(mixed_precision=cfg.train.mixed_precision)
+    is_main = accelerator.is_main_process
+    if args.wandb and is_main:
+        accelerator.print("[note] wandb logging is not wired for Stage-1; ignoring --wandb")
+
+    ds_kw = dataset_kwargs_from_cfg(cfg.dataset)
+    train_ds = get_dataset(cfg.dataset.name, split="train", img_size=cfg.dataset.img_size, **ds_kw)
+    val_ds = get_dataset(cfg.dataset.name, split="val", img_size=cfg.dataset.img_size, **ds_kw)
+    persistent = cfg.train.num_workers > 0
+    train_dl = DataLoader(train_ds, batch_size=cfg.train.batch_size, shuffle=True,
+                          num_workers=cfg.train.num_workers, pin_memory=True,
+                          drop_last=True, persistent_workers=persistent)
+    val_dl = DataLoader(val_ds, batch_size=cfg.train.batch_size, shuffle=False,
+                        num_workers=cfg.train.num_workers, pin_memory=True,
+                        drop_last=False, persistent_workers=persistent)
+
+    model = LagrangianSourceNet(LagrangianSourceConfig(
+        T_in=cfg.dataset.T_in,
+        T_out=cfg.dataset.T_out,
+        img_size=cfg.dataset.img_size,
+        base_channels=cfg.model.base_channels,
+        channel_mult=tuple(cfg.model.channel_mult),
+        num_blocks=cfg.model.num_blocks,
+        max_displacement=cfg.model.max_displacement,
+        source_scale=cfg.model.source_scale,
+    ))
+    if is_main:
+        accelerator.print(f"[model] Lagrangian prior params="
+                          f"{sum(p.numel() for p in model.parameters()) / 1e6:.2f}M")
+
+    optim = AdamW(model.parameters(), lr=cfg.train.lr,
+                  weight_decay=cfg.train.weight_decay, betas=(0.9, 0.999))
+    model, optim, train_dl, val_dl = accelerator.prepare(model, optim, train_dl, val_dl)
+    ema = EMA(model, beta=cfg.train.ema_rate, update_every=10).to(accelerator.device)
+
+    def compute_loss(frames):
+        cond = frames[:, : cfg.dataset.T_in]
+        gt = frames[:, cfg.dataset.T_in:]
+        pred, aux = model(cond)
+        total, parts = lagrangian_source_loss(
+            pred, gt, aux,
+            lambda_l1=cfg.loss.lambda_l1,
+            lambda_mse=cfg.loss.lambda_mse,
+            lambda_soft_csi=cfg.loss.lambda_soft_csi,
+            lambda_flow_smooth=cfg.loss.lambda_flow_smooth,
+            lambda_source_sparse=cfg.loss.lambda_source_sparse,
+            thresholds=tuple(cfg.loss.thresholds),
+            pixel_scale=cfg.loss.pixel_scale,
+            soft_csi_sharpness=cfg.loss.soft_csi_sharpness,
+        )
+        return total
+
+    def save_ckpt(path, step):
+        torch.save({"step": step,
+                    "model": accelerator.get_state_dict(model),
+                    "ema": ema.state_dict(),
+                    "optim": optim.state_dict()}, path)
+        accelerator.print(f"[ckpt] saved {path}")
+
+    @torch.no_grad()
+    def run_val(max_batches):
+        model.eval()
+        losses = []
+        for i, frames in enumerate(val_dl):
+            if i >= max_batches:
+                break
+            losses.append(compute_loss(frames.to(accelerator.device)).item())
+        model.train()
+        return sum(losses) / max(1, len(losses))
+
+    train_iter = cycle(train_dl)
+    best_val = float("inf")
+    t0 = time.time()
+    pbar = tqdm(range(cfg.train.total_steps), disable=not is_main, dynamic_ncols=True)
+    for step in pbar:
+        lr = cosine_lr(step, warmup=cfg.train.warmup_steps,
+                       total=cfg.train.total_steps, lr_max=cfg.train.lr)
+        for g in optim.param_groups:
+            g["lr"] = lr
+        frames = next(train_iter).to(accelerator.device, non_blocking=True)
+        loss = compute_loss(frames)
+        accelerator.backward(loss)
+        if accelerator.sync_gradients:
+            accelerator.clip_grad_norm_(model.parameters(), cfg.train.grad_clip)
+        optim.step()
+        optim.zero_grad()
+        ema.update()
+
+        if is_main and step % cfg.train.log_every == 0:
+            pbar.set_postfix(loss=f"{loss.item():.4f}", lr=f"{lr:.1e}",
+                             sps=f"{(step + 1) / (time.time() - t0):.2f}/s")
+        if is_main and step > 0 and step % cfg.train.val_every == 0:
+            val_loss = run_val(cfg.train.val_max_batches)
+            accelerator.print(f"[val] step={step} loss={val_loss:.4f}")
+            if val_loss < best_val:
+                best_val = val_loss
+                save_ckpt(ckpt_dir / "best.pt", step)
+        if is_main and step > 0 and step % cfg.train.ckpt_every == 0:
+            save_ckpt(ckpt_dir / "last.pt", step)
+
+    if is_main:
+        save_ckpt(ckpt_dir / "last.pt", cfg.train.total_steps)
+        if not (ckpt_dir / "best.pt").exists():
+            save_ckpt(ckpt_dir / "best.pt", cfg.train.total_steps)
+        accelerator.print(f"[done] Stage-1 prior saved under {ckpt_dir}")
+
+
 def main():
     args = parse_args()
     cfg = OmegaConf.load(args.config)
     if args.override:
         cfg = OmegaConf.merge(cfg, OmegaConf.from_dotlist(list(args.override)))
     set_seed(args.seed)
+
+    if "transport" not in cfg:
+        # Stage-1 config (Lagrangian advection prior) has no flow-map sections.
+        return train_prior(cfg, args)
 
     exp_name = f"pgfmm_{cfg.dataset.name}_{args.note}"
     exp_dir = Path(os.environ.get("PGFMM_OUT", ROOT / "runs")) / cfg.dataset.name / exp_name
