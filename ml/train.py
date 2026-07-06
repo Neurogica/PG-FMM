@@ -33,9 +33,9 @@ from torch.optim import AdamW  # noqa: E402
 from torch.utils.data import DataLoader  # noqa: E402
 from tqdm import tqdm  # noqa: E402
 
-from pgfmm.model import PGFMMConfig, PGFMMRunner  # noqa: E402
 from pgfmm.data import dataset_kwargs_from_cfg, get_dataset  # noqa: E402
 from pgfmm.data.paired import MultiCachePairedDataset, PairedDataset  # noqa: E402
+from pgfmm.model import PGFMMConfig, PGFMMRunner  # noqa: E402
 
 
 # --------------------------------------------------------------------- helpers

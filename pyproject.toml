@@ -28,6 +28,7 @@ dependencies = [
 [project.optional-dependencies]
 # Metrics used by ml/eval.py reuse the AlphaPre benchmark Evaluator (see ml/README.md).
 eval = ["lpips>=0.1.4", "pandas>=2.1"]
+dev = ["pytest>=8.0", "ruff>=0.6"]
 
 
 [build-system]

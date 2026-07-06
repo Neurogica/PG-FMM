@@ -54,6 +54,20 @@ python ml/eval.py \
 
 Reports CSI (per threshold + mean), HSS, SSIM, MSE, CRPS, LPIPS under the AlphaPre protocol.
 
+## Tests
+
+CPU smoke tests (no data or GPU needed; a few seconds):
+
+```bash
+uv pip install -e ".[dev]"     # pytest + ruff
+uv run pytest tests/ -q
+```
+
+They cover package imports, the Lagrangian prior's physical behaviour
+(identity/shift warping, rollout reproducibility), and a tiny PG-FMM runner
+doing one training step and end-to-end sampling, with and without the
+physics prior.
+
 ## Package map
 
 | Module | Contents |
