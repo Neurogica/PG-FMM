@@ -9,7 +9,7 @@ authors = [{ name = "The PG-FMM Authors" }]
 keywords = ["precipitation-nowcasting", "flow-matching", "physics-informed", "radar", "generative-models"]
 
 dependencies = [
-    "torch>=2.4",
+    "torch>=2.13.0",
     "torchvision>=0.19",
     "diffusers>=0.30",
     "accelerate>=0.34",
