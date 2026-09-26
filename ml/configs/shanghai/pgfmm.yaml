@@ -1,0 +1,68 @@
+# v22 on Shanghai — same recipe as SEVIR/Meteo (frozen Lagrangian + Flow-Map).
+
+dataset:
+  name: shanghai
+  img_size: 128
+  T_in: 5
+  T_out: 20
+transport:
+  interval: 1000
+  prior_kind: last_frame
+  cond_x1: true
+  cond_extra_x1_external: false
+  cond_extra_T_external: 0
+motion:
+  enabled: true
+  base_channels: 96
+  channel_mult: [1, 2, 4, 4]
+  num_blocks: 2
+  max_displacement: 8.0
+  source_scale: 0.25
+  ckpt: runs/shanghai/lagrangian_prior/checkpoints/best.pt
+  freeze: true
+residual:
+  transform: pixel
+  state_channels: 1
+  normalize: false
+flow_map:
+  noise_scale: 1.0
+  min_delta: 0.05
+  direct_prob: 0.5
+  consistency_weight: 0.04
+  consistency_start_step: 4000
+  consistency_ramp_steps: 6000
+  consistency_detach_midpoint: true
+  lambda_psd: 0.0
+gate:
+  use_residual_gate: false
+skill:
+  pixel_scale: 255.0
+  thresholds: [20.0, 30.0, 35.0, 40.0]
+network:
+  base_channels: 128
+  channel_mult: [1, 2, 3, 4]
+  attention_resolutions: [16, 8]
+  num_res_blocks: 2
+  dropout: 0.0
+physics:
+  lambda_mass: 0.0
+  lambda_smooth: 0.0
+  lambda_diffusion: 0.0
+train:
+  batch_size: 8
+  num_workers: 8
+  lr: 0.0001
+  weight_decay: 0.0
+  ema_rate: 0.999
+  warmup_steps: 1500
+  total_steps: 38000
+  grad_clip: 0.5
+  mixed_precision: bf16
+  log_every: 100
+  ckpt_every: 5000
+  val_every: 2500
+  val_max_batches: 20
+sample:
+  nfe: 4
+  residual_scale: 1.0
+  clamp: [0.0, 1.0]

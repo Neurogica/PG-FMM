@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+
+# Data & runs (never commit large artifacts)
+data/**
+!data/README.md
+runs/
+*.h5
+*.pt
+*.ckpt
+*.npz
+
+# Caches / logs
+.cache/
+*.log
+.ipynb_checkpoints/
+
+# OS
+.DS_Store
+.ruff_cache/
+
+# Node (Sevalla build fallback)
+node_modules/
+package-lock.json
