@@ -1,0 +1,40 @@
+# Lagrangian advection prior on MeteoNet (DiffCast h5, 128, 5->20).
+# Train this first, then point v22 motion.ckpt at the meteo checkpoint.
+
+dataset:
+  name: meteo
+  img_size: 128
+  T_in: 5
+  T_out: 20
+
+model:
+  base_channels: 96
+  channel_mult: [1, 2, 4, 4]
+  num_blocks: 2
+  max_displacement: 8.0
+  source_scale: 0.25
+
+loss:
+  lambda_l1: 1.0
+  lambda_mse: 0.25
+  lambda_soft_csi: 0.02
+  lambda_flow_smooth: 0.01
+  lambda_source_sparse: 0.001
+  pixel_scale: 90.0
+  thresholds: [12.0, 18.0, 24.0, 32.0]
+  soft_csi_sharpness: 8.0
+
+train:
+  batch_size: 16
+  num_workers: 8
+  lr: 1.0e-4
+  weight_decay: 0.01
+  ema_rate: 0.999
+  warmup_steps: 1000
+  total_steps: 30_000
+  grad_clip: 1.0
+  mixed_precision: bf16
+  log_every: 50
+  ckpt_every: 2500
+  val_every: 1000
+  val_max_batches: 20

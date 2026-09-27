@@ -1,0 +1,52 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite the paper below (preferred-citation) and, if useful, the software itself."
+title: "PG-FMM: Physics-Guided Flow-Map Matching for Precipitation Nowcasting"
+type: software
+version: 1.0.0
+date-released: 2026-09-26
+repository-code: "https://github.com/Neurogica/PG-FMM"
+url: "https://neurogica.github.io/PG-FMM/"
+license: BSD-3-Clause
+authors:
+  - family-names: Nagashima
+    given-names: Shunya
+    orcid: "https://orcid.org/0009-0007-9741-7628"
+    affiliation: "Neurogica Inc."
+  - family-names: Bannai
+    given-names: Takumi
+    orcid: "https://orcid.org/0000-0002-6827-488X"
+    affiliation: "LTS, Inc. / ME-Lab Japan, Inc."
+  - family-names: Misaizu
+    given-names: Makoto
+    orcid: "https://orcid.org/0009-0001-4254-1652"
+    affiliation: "Neurogica Inc. / Hokkaido University"
+  - family-names: Maeda
+    given-names: Keisuke
+    orcid: "https://orcid.org/0000-0001-8039-3462"
+    affiliation: "Hokkaido University"
+  - family-names: Ogawa
+    given-names: Takahiro
+    orcid: "https://orcid.org/0000-0001-5332-8112"
+    affiliation: "Hokkaido University"
+  - family-names: Haseyama
+    given-names: Miki
+    orcid: "https://orcid.org/0000-0003-1496-1761"
+    affiliation: "Hokkaido University"
+preferred-citation:
+  type: conference-paper
+  title: "Physics-Guided Flow-Map Matching for Precipitation Nowcasting"
+  collection-title: "Proceedings of the Asian Conference on Computer Vision (ACCV)"
+  year: 2026
+  authors:
+    - family-names: Nagashima
+      given-names: Shunya
+    - family-names: Bannai
+      given-names: Takumi
+    - family-names: Misaizu
+      given-names: Makoto
+    - family-names: Maeda
+      given-names: Keisuke
+    - family-names: Ogawa
+      given-names: Takahiro
+    - family-names: Haseyama
+      given-names: Miki

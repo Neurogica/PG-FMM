@@ -1,0 +1,46 @@
+# Learned Lagrangian source forecast for AlphaPre-style SEVIR (128, 5->20).
+#
+# This is Stage 1 of the proposed method:
+#   past frames -> learned velocity v_t + source/sink s_t
+#   R_{t+1} = warp(R_t, v_t) + s_t
+#
+# After training, cache forecasts with scripts/cache_lagrangian_source.py and
+# use them as the x_1 prior for the Flow-Map head (configs/sevir/pgfmm.yaml).
+
+dataset:
+  name: sevir
+  img_size: 128
+  T_in: 5
+  T_out: 20
+
+model:
+  base_channels: 96
+  channel_mult: [1, 2, 4, 4]
+  num_blocks: 2
+  max_displacement: 8.0
+  source_scale: 0.25
+
+loss:
+  lambda_l1: 1.0
+  lambda_mse: 0.25
+  lambda_soft_csi: 0.02
+  lambda_flow_smooth: 0.01
+  lambda_source_sparse: 0.001
+  pixel_scale: 255.0
+  thresholds: [74.0, 133.0, 160.0, 181.0]
+  soft_csi_sharpness: 8.0
+
+train:
+  batch_size: 16
+  num_workers: 8
+  lr: 1.0e-4
+  weight_decay: 0.01
+  ema_rate: 0.999
+  warmup_steps: 2000
+  total_steps: 50_000
+  grad_clip: 1.0
+  mixed_precision: bf16
+  log_every: 50
+  ckpt_every: 2500
+  val_every: 1000
+  val_max_batches: 20
